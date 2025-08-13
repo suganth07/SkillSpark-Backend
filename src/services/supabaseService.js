@@ -393,15 +393,62 @@ class SupabaseService {
         
         const result = await this.pool.query(query, [userId]);
         
-        // Transform the data to match frontend expectations
-        const transformedData = result.rows.map(item => ({
-          id: item.id,
-          userId: item.user_id,
-          topic: item.topic,
-          roadmapData: typeof item.roadmap_data === 'string' ? JSON.parse(item.roadmap_data) : item.roadmap_data,
-          createdAt: item.created_at,
-          updatedAt: item.updated_at
-        }));
+        // Get progress data for all roadmaps
+        const progressQuery = `
+          SELECT rp.roadmap_id, rp.point_id, rp.is_completed, rp.completed_at
+          FROM roadmap_progress rp
+          INNER JOIN user_roadmaps ur ON rp.roadmap_id = ur.id
+          INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
+          WHERE ut.user_id = $1
+        `;
+        
+        const progressResult = await this.pool.query(progressQuery, [userId]);
+        const progressMap = new Map();
+        
+        // Group progress by roadmap_id
+        progressResult.rows.forEach(row => {
+          if (!progressMap.has(row.roadmap_id)) {
+            progressMap.set(row.roadmap_id, {});
+          }
+          progressMap.get(row.roadmap_id)[row.point_id] = {
+            isCompleted: row.is_completed,
+            completedAt: row.completed_at
+          };
+        });
+        
+        // Transform the data to match frontend expectations and merge progress
+        const transformedData = result.rows.map(item => {
+          const roadmapData = typeof item.roadmap_data === 'string' ? JSON.parse(item.roadmap_data) : item.roadmap_data;
+          const progressData = progressMap.get(item.id) || {};
+          
+          // Update points with progress data
+          if (roadmapData.points) {
+            roadmapData.points = roadmapData.points.map(point => ({
+              ...point,
+              isCompleted: progressData[point.id]?.isCompleted || false
+            }));
+            
+            // Recalculate progress
+            const completedPoints = roadmapData.points.filter(point => point.isCompleted).length;
+            const totalPoints = roadmapData.points.length;
+            const percentage = totalPoints > 0 ? Math.round((completedPoints / totalPoints) * 100) : 0;
+            
+            roadmapData.progress = {
+              completedPoints,
+              totalPoints,
+              percentage
+            };
+          }
+          
+          return {
+            id: item.id,
+            userId: item.user_id,
+            topic: item.topic,
+            roadmapData: roadmapData,
+            createdAt: item.created_at,
+            updatedAt: item.updated_at
+          };
+        });
         
         return transformedData;
       }
@@ -439,20 +486,67 @@ class SupabaseService {
 
         console.log('📊 Raw roadmaps from database:', roadmaps);
 
-        // Transform the data to match frontend expectations
+        // Get progress data for all roadmaps
+        let progressData = [];
+        if (roadmaps && roadmaps.length > 0) {
+          const roadmapIds = roadmaps.map(rm => rm.id);
+          const { data: progress, error: progressError } = await this.supabase
+            .from('roadmap_progress')
+            .select('roadmap_id, point_id, is_completed, completed_at')
+            .in('roadmap_id', roadmapIds);
+
+          if (progressError) throw progressError;
+          progressData = progress || [];
+        }
+
+        // Group progress by roadmap_id
+        const progressMap = new Map();
+        progressData.forEach(row => {
+          if (!progressMap.has(row.roadmap_id)) {
+            progressMap.set(row.roadmap_id, {});
+          }
+          progressMap.get(row.roadmap_id)[row.point_id] = {
+            isCompleted: row.is_completed,
+            completedAt: row.completed_at
+          };
+        });
+
+        // Transform the data to match frontend expectations and merge progress
         const transformedData = (roadmaps || []).map(roadmap => {
           const topic = userTopics.find(t => t.id === roadmap.user_topic_id);
+          const roadmapData = typeof roadmap.roadmap_data === 'string' ? JSON.parse(roadmap.roadmap_data) : roadmap.roadmap_data;
+          const progressForRoadmap = progressMap.get(roadmap.id) || {};
+          
+          // Update points with progress data
+          if (roadmapData.points) {
+            roadmapData.points = roadmapData.points.map(point => ({
+              ...point,
+              isCompleted: progressForRoadmap[point.id]?.isCompleted || false
+            }));
+            
+            // Recalculate progress
+            const completedPoints = roadmapData.points.filter(point => point.isCompleted).length;
+            const totalPoints = roadmapData.points.length;
+            const percentage = totalPoints > 0 ? Math.round((completedPoints / totalPoints) * 100) : 0;
+            
+            roadmapData.progress = {
+              completedPoints,
+              totalPoints,
+              percentage
+            };
+          }
+          
           return {
             id: roadmap.id,
             userId: userId,
             topic: topic?.topic || 'Unknown',
-            roadmapData: typeof roadmap.roadmap_data === 'string' ? JSON.parse(roadmap.roadmap_data) : roadmap.roadmap_data,
+            roadmapData: roadmapData,
             createdAt: roadmap.created_at,
             updatedAt: roadmap.updated_at
           };
         });
         
-        console.log('✅ Transformed roadmaps for user:', transformedData);
+        console.log('✅ Transformed roadmaps with progress for user:', transformedData);
         
         return transformedData;
       } else {

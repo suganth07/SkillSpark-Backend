@@ -21,18 +21,23 @@ export const createRateLimiter = (options = {}) => {
 };
 
 export const generalLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 500, // Increased from 100 to 500 for development
 });
 
 export const roadmapLimiter = createRateLimiter({
-  windowMs: 60 * 1000,
-  max: 5,
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // Increased from 5 to 20
 });
 
 export const playlistLimiter = createRateLimiter({
-  windowMs: 60 * 1000,
-  max: 10,
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // Increased from 10 to 30
+});
+
+export const userDataLimiter = createRateLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100, // Allow more requests for user data operations
 });
 
 export const helmetConfig = helmet({

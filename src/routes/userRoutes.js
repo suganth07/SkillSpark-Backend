@@ -3,25 +3,12 @@ import { body, validationResult } from 'express-validator';
 import supabaseService from '../services/supabaseService.js';
 import { SuccessResponse, ErrorResponse, ErrorDetails } from '../models/responseModels.js';
 import { appLogger } from '../utils/logger.js';
-import rateLimit from 'express-rate-limit';
+import { userDataLimiter } from '../middleware/security.js';
 
 const router = express.Router();
 
 // Rate limiter for auth endpoints
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
-  message: {
-    success: false,
-    error: new ErrorDetails(
-      'RATE_LIMIT_EXCEEDED',
-      'Too many authentication attempts',
-      'Please try again later'
-    ),
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+const authLimiter = userDataLimiter;
 
 // Input validation middleware
 const validateRegister = [
@@ -331,7 +318,7 @@ router.post('/roadmaps', async (req, res) => {
 });
 
 // Get user roadmaps endpoint
-router.get('/roadmaps/:userId', async (req, res) => {
+router.get('/roadmaps/:userId', userDataLimiter, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -509,7 +496,7 @@ router.get('/roadmaps/:roadmapId/progress', async (req, res) => {
 });
 
 // Get all roadmap progress for a user
-router.get('/progress/:userId', async (req, res) => {
+router.get('/progress/:userId', userDataLimiter, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -537,6 +524,31 @@ router.get('/progress/:userId', async (req, res) => {
     );
 
     res.status(500).json(errorResponse);
+  }
+});
+
+// Test endpoint to check database connection
+router.get('/test-db/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Test basic user query
+    const testUser = await supabaseService.pool?.query('SELECT * FROM users WHERE id = $1', [userId]);
+    
+    const result = {
+      userExists: testUser?.rows?.length > 0,
+      userId: userId,
+      timestamp: new Date().toISOString(),
+      poolAvailable: !!supabaseService.pool
+    };
+    
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      userId: req.params?.userId
+    });
   }
 });
 
