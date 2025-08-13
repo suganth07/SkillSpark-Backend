@@ -39,6 +39,19 @@ CREATE TABLE user_videos (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Create roadmap_progress table to track individual point completion
+CREATE TABLE roadmap_progress (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    roadmap_id UUID REFERENCES user_roadmaps(id) ON DELETE CASCADE,
+    point_id VARCHAR(255) NOT NULL,
+    is_completed BOOLEAN DEFAULT FALSE,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, roadmap_id, point_id)
+);
+
 -- Create indexes for better performance
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_user_topics_user_id ON user_topics(user_id);
@@ -46,6 +59,10 @@ CREATE INDEX idx_user_topics_topic ON user_topics(topic);
 CREATE INDEX idx_user_roadmaps_user_topic_id ON user_roadmaps(user_topic_id);
 CREATE INDEX idx_user_videos_user_roadmap_id ON user_videos(user_roadmap_id);
 CREATE INDEX idx_user_videos_level ON user_videos(level);
+CREATE INDEX idx_roadmap_progress_user_id ON roadmap_progress(user_id);
+CREATE INDEX idx_roadmap_progress_roadmap_id ON roadmap_progress(roadmap_id);
+CREATE INDEX idx_roadmap_progress_point_id ON roadmap_progress(point_id);
+CREATE INDEX idx_roadmap_progress_is_completed ON roadmap_progress(is_completed);
 
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -59,6 +76,11 @@ $$ language 'plpgsql';
 -- Create trigger to automatically update updated_at
 CREATE TRIGGER update_user_roadmaps_updated_at
     BEFORE UPDATE ON user_roadmaps
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_roadmap_progress_updated_at
+    BEFORE UPDATE ON roadmap_progress
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 ```
@@ -124,12 +146,13 @@ SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 
 ```
 User Flow:
-User -> Topic -> Roadmap -> Videos (Basic/Medium/Advanced)
+User -> Topic -> Roadmap -> Progress Tracking -> Videos (Basic/Medium/Advanced)
 
 Tables:
 - users: Store user credentials
 - user_topics: Topics that users are learning
 - user_roadmaps: Generated roadmaps for each topic
+- roadmap_progress: Track completion status of individual roadmap points
 - user_videos: YouTube videos for each roadmap level
 ```
 
@@ -157,6 +180,15 @@ The roadmap_data JSONB field will store data like:
     "percentage": 0
   }
 }
+```
+
+The roadmap_progress table will store individual progress records:
+```sql
+-- Example progress records
+INSERT INTO roadmap_progress (user_id, roadmap_id, point_id, is_completed, completed_at)
+VALUES 
+('user-uuid-here', 'roadmap-uuid-here', 'point_xyz789', true, NOW()),
+('user-uuid-here', 'roadmap-uuid-here', 'point_abc456', false, NULL);
 ```
 
 The video_data JSONB field will store arrays of videos like:

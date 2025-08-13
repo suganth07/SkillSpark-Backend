@@ -5,6 +5,7 @@ import compression from "compression";
 import roadmapRoutes from "./src/routes/roadmapRoutes.js";
 import playlistRoutes from "./src/routes/playlistRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
+import supabaseService from "./src/services/supabaseService.js";
 import {
   helmetConfig,
   generalLimiter,
@@ -129,18 +130,34 @@ app.use("*", (req, res) => {
   });
 });
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   appLogger.info("SIGTERM received, shutting down gracefully");
+  await supabaseService.closePool();
   process.exit(0);
 });
 
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   appLogger.info("SIGINT received, shutting down gracefully");
+  await supabaseService.closePool();
   process.exit(0);
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server started successfully on http://0.0.0.0:${PORT}`);
+// Handle uncaught exceptions
+process.on("uncaughtException", async (error) => {
+  appLogger.error("Uncaught Exception:", error);
+  await supabaseService.closePool();
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on("unhandledRejection", async (reason, promise) => {
+  appLogger.error("Unhandled Rejection at:", promise, "reason:", reason);
+  await supabaseService.closePool();
+  process.exit(1);
+});
+
+app.listen(PORT, "172.19.26.32", () => {
+  console.log(`🚀 Server started successfully on http://172.19.26.32:${PORT}`);
   console.log(`📊 Environment: ${NODE_ENV}`);
   console.log(`📝 Logging to files: ${process.cwd()}/logs/`);
 

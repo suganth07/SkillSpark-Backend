@@ -1,31 +1,115 @@
 import { createClient } from '@supabase/supabase-js';
+import pkg from 'pg';
+const { Pool } = pkg;
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 class SupabaseService {
   constructor() {
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
-      console.warn('Supabase configuration missing - user features will be disabled');
+    if (!process.env.DATABASE_URL) {
+      console.error('DATABASE_URL is required for PostgreSQL connection');
+      this.pool = null;
       this.supabase = null;
       return;
     }
 
     try {
-      this.supabase = createClient(
-        process.env.SUPABASE_URL,
-        process.env.SUPABASE_SERVICE_KEY
-      );
-      console.log('✅ Supabase client initialized successfully');
+      console.log('🔗 Connecting to database...');
+      console.log('🔗 Database URL (masked):', process.env.DATABASE_URL.replace(/:[^:@]*@/, ':***@'));
+      
+      // Initialize PostgreSQL connection pool for raw SQL
+      this.pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false,
+          require: true
+        },
+        // Add connection pool settings for Supabase
+        max: 5, // Lower connection count for better performance
+        idleTimeoutMillis: 10000,
+        connectionTimeoutMillis: 10000, // Longer timeout for initial connection
+        query_timeout: 60000,
+        statement_timeout: 60000,
+      });
+
+      // Add error handling for pool events
+      this.pool.on('error', (err) => {
+        console.warn('⚠️ PostgreSQL pool error:', err.message);
+        console.log('🔄 Disabling PostgreSQL pool, will use Supabase client fallback');
+        this.pool = null; // Disable pool on error
+      });
+
+      this.pool.on('connect', (client) => {
+        console.log('🔗 New PostgreSQL client connected');
+      });
+
+      this.pool.on('remove', (client) => {
+        console.log('🔌 PostgreSQL client removed from pool');
+      });
+      
+      // Initialize Supabase client only for auth (optional)
+      if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
+        this.supabase = createClient(
+          process.env.SUPABASE_URL,
+          process.env.SUPABASE_SERVICE_KEY
+        );
+      } else {
+        this.supabase = null;
+      }
+      
+      console.log('✅ PostgreSQL pool initialized successfully');
+      
+      // Test the connection asynchronously (don't block startup)
+      this.testConnection().catch(error => {
+        console.warn('⚠️ PostgreSQL connection test failed, will use Supabase client fallback');
+        this.pool = null; // Disable pool if connection fails
+      });
+      
     } catch (error) {
-      console.error('Failed to initialize Supabase client:', error.message);
+      console.error('Failed to initialize database connections:', error.message);
+      this.pool = null;
       this.supabase = null;
     }
   }
 
+  async testConnection() {
+    if (!this.pool) return;
+    
+    try {
+      const client = await this.pool.connect();
+      const result = await client.query('SELECT NOW()');
+      console.log('✅ Database connection test successful:', result.rows[0]);
+      client.release();
+    } catch (error) {
+      console.error('❌ Database connection test failed:', error.message);
+      console.log('🔄 Disabling PostgreSQL pool due to connection failure');
+      this.pool = null; // Disable pool if connection test fails
+      throw error;
+    }
+  }
+
+  // Gracefully close the pool
+  async closePool() {
+    if (this.pool) {
+      try {
+        await this.pool.end();
+        console.log('🔌 PostgreSQL pool closed gracefully');
+      } catch (error) {
+        console.error('❌ Error closing PostgreSQL pool:', error.message);
+      }
+      this.pool = null;
+    }
+  }
+
   _checkConnection() {
-    if (!this.supabase) {
-      throw new Error('Supabase is not configured. Please set up your Supabase credentials.');
+    if (!this.pool && !this.supabase) {
+      throw new Error('No database connection available. Please check your configuration.');
+    }
+    
+    // If pool was disabled due to errors, ensure we log this
+    if (!this.pool && this.supabase) {
+      console.log('🔄 Using Supabase client fallback (PostgreSQL pool unavailable)');
     }
   }
 
@@ -33,14 +117,32 @@ class SupabaseService {
   async createUser(username, password) {
     this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('users')
-        .insert([{ username, password }])
-        .select()
-        .single();
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          INSERT INTO users (username, password)
+          VALUES ($1, $2)
+          RETURNING id, username, created_at
+        `;
+        
+        const result = await this.pool.query(query, [username, password]);
+        return result.rows[0];
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for user creation');
+        
+        const { data, error } = await this.supabase
+          .from('users')
+          .insert([{ username, password }])
+          .select()
+          .single();
 
-      if (error) throw error;
-      return data;
+        if (error) throw error;
+        return data;
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to create user: ${error.message}`);
     }
@@ -49,19 +151,57 @@ class SupabaseService {
   async getUserByCredentials(username, password) {
     this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('users')
-        .select('id, username')
-        .eq('username', username)
-        .eq('password', password)
-        .single();
+      // Try PostgreSQL first
+      if (this.pool) {
+        console.log('🔍 Attempting to get user by credentials via PostgreSQL:', username);
+        
+        const query = `
+          SELECT id, username 
+          FROM users 
+          WHERE username = $1 AND password = $2
+        `;
+        
+        console.log('📋 Executing query:', query);
+        console.log('📋 Query parameters:', [username, '***']);
+        
+        const result = await this.pool.query(query, [username, password]);
+        
+        console.log('📊 Query result:', {
+          rowCount: result.rowCount,
+          hasRows: result.rows.length > 0,
+          firstRow: result.rows.length > 0 ? { id: result.rows[0].id, username: result.rows[0].username } : null
+        });
+        
+        return result.rows.length > 0 ? result.rows[0] : null;
+      } 
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for user authentication');
+        
+        const { data, error } = await this.supabase
+          .from('users')
+          .select('id, username')
+          .eq('username', username)
+          .eq('password', password)
+          .single();
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      if (error.code === 'PGRST116') {
-        return null; // No user found
+        if (error) {
+          if (error.code === 'PGRST116') {
+            return null; // No user found
+          }
+          throw error;
+        }
+        return data;
+      } else {
+        throw new Error('No database connection available');
       }
+    } catch (error) {
+      console.error('❌ Database query error:', {
+        message: error.message,
+        code: error.code,
+        detail: error.detail,
+        hint: error.hint
+      });
       throw new Error(`Failed to get user: ${error.message}`);
     }
   }
@@ -69,16 +209,34 @@ class SupabaseService {
   async checkUserExists(username) {
     this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('users')
-        .select('id')
-        .eq('username', username)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-        throw error;
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          SELECT COUNT(*) as count 
+          FROM users 
+          WHERE username = $1
+        `;
+        
+        const result = await this.pool.query(query, [username]);
+        return parseInt(result.rows[0].count) > 0;
       }
-      return data !== null;
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for user existence check');
+        
+        const { data, error } = await this.supabase
+          .from('users')
+          .select('id')
+          .eq('username', username)
+          .single();
+
+        if (error && error.code !== 'PGRST116') {
+          throw error;
+        }
+        return data !== null;
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to check user existence: ${error.message}`);
     }
@@ -86,49 +244,91 @@ class SupabaseService {
 
   // User Topics
   async createUserTopic(userId, topic) {
+    this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('user_topics')
-        .insert([{ user_id: userId, topic }])
-        .select()
-        .single();
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          INSERT INTO user_topics (user_id, topic)
+          VALUES ($1, $2)
+          RETURNING id, user_id, topic, created_at
+        `;
+        
+        const result = await this.pool.query(query, [userId, topic]);
+        return result.rows[0];
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for creating user topic');
+        
+        const { data, error } = await this.supabase
+          .from('user_topics')
+          .insert([{ user_id: userId, topic: topic }])
+          .select()
+          .single();
 
-      if (error) throw error;
-      return data;
+        if (error) throw error;
+        return data;
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to create user topic: ${error.message}`);
     }
   }
 
   async getUserTopics(userId) {
+    this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('user_topics')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return data || [];
+      const query = `
+        SELECT * 
+        FROM user_topics 
+        WHERE user_id = $1 
+        ORDER BY created_at DESC
+      `;
+      
+      const result = await this.pool.query(query, [userId]);
+      return result.rows || [];
     } catch (error) {
       throw new Error(`Failed to get user topics: ${error.message}`);
     }
   }
 
   async getUserTopicByName(userId, topicName) {
+    this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('user_topics')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('topic', topicName)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-        throw error;
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          SELECT * 
+          FROM user_topics 
+          WHERE user_id = $1 AND topic = $2
+        `;
+        
+        const result = await this.pool.query(query, [userId, topicName]);
+        return result.rows.length > 0 ? result.rows[0] : null;
       }
-      
-      return data || null;
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for getting user topic by name');
+        
+        const { data, error } = await this.supabase
+          .from('user_topics')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('topic', topicName)
+          .single();
+
+        if (error) {
+          if (error.code === 'PGRST116') {
+            return null; // No topic found
+          }
+          throw error;
+        }
+        return data;
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to get user topic by name: ${error.message}`);
     }
@@ -136,72 +336,167 @@ class SupabaseService {
 
   // User Roadmaps
   async createUserRoadmap(userTopicId, roadmapData) {
+    this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('user_roadmaps')
-        .insert([{ 
-          user_topic_id: userTopicId, 
-          roadmap_data: roadmapData 
-        }])
-        .select()
-        .single();
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          INSERT INTO user_roadmaps (user_topic_id, roadmap_data)
+          VALUES ($1, $2)
+          RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
+        `;
+        
+        const result = await this.pool.query(query, [userTopicId, JSON.stringify(roadmapData)]);
+        return result.rows[0];
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for creating user roadmap');
+        
+        const { data, error } = await this.supabase
+          .from('user_roadmaps')
+          .insert([{ 
+            user_topic_id: userTopicId, 
+            roadmap_data: roadmapData 
+          }])
+          .select()
+          .single();
 
-      if (error) throw error;
-      return data;
+        if (error) throw error;
+        return data;
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to create user roadmap: ${error.message}`);
     }
   }
 
   async getUserRoadmaps(userId) {
+    this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('user_roadmaps')
-        .select(`
-          id,
-          roadmap_data,
-          created_at,
-          updated_at,
-          user_topics!inner(
-            user_id,
-            topic
-          )
-        `)
-        .eq('user_topics.user_id', userId)
-        .order('created_at', { ascending: false });
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          SELECT 
+            ur.id,
+            ur.roadmap_data,
+            ur.created_at,
+            ur.updated_at,
+            ut.user_id,
+            ut.topic
+          FROM user_roadmaps ur
+          INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
+          WHERE ut.user_id = $1
+          ORDER BY ur.created_at DESC
+        `;
+        
+        const result = await this.pool.query(query, [userId]);
+        
+        // Transform the data to match frontend expectations
+        const transformedData = result.rows.map(item => ({
+          id: item.id,
+          userId: item.user_id,
+          topic: item.topic,
+          roadmapData: typeof item.roadmap_data === 'string' ? JSON.parse(item.roadmap_data) : item.roadmap_data,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at
+        }));
+        
+        return transformedData;
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for getting user roadmaps');
+        console.log('🔍 Querying roadmaps for user ID:', userId);
+        
+        // Get user topics first
+        const { data: userTopics, error: topicsError } = await this.supabase
+          .from('user_topics')
+          .select('id, topic')
+          .eq('user_id', userId);
 
-      if (error) throw error;
-      
-      // Transform the data to match frontend expectations
-      const transformedData = (data || []).map(item => ({
-        id: item.id,
-        userId: item.user_topics.user_id,
-        topic: item.user_topics.topic,
-        roadmapData: item.roadmap_data,
-        createdAt: item.created_at,
-        updatedAt: item.updated_at
-      }));
-      
-      return transformedData;
+        if (topicsError) throw topicsError;
+
+        console.log('📂 Found user topics:', userTopics);
+
+        if (!userTopics || userTopics.length === 0) {
+          console.log('⚠️ No topics found for user:', userId);
+          return []; // No topics found for user
+        }
+
+        // Get roadmaps for all user topics
+        const topicIds = userTopics.map(topic => topic.id);
+        console.log('🔍 Searching roadmaps for topic IDs:', topicIds);
+        
+        const { data: roadmaps, error: roadmapsError } = await this.supabase
+          .from('user_roadmaps')
+          .select('id, user_topic_id, roadmap_data, created_at, updated_at')
+          .in('user_topic_id', topicIds)
+          .order('created_at', { ascending: false });
+
+        if (roadmapsError) throw roadmapsError;
+
+        console.log('📊 Raw roadmaps from database:', roadmaps);
+
+        // Transform the data to match frontend expectations
+        const transformedData = (roadmaps || []).map(roadmap => {
+          const topic = userTopics.find(t => t.id === roadmap.user_topic_id);
+          return {
+            id: roadmap.id,
+            userId: userId,
+            topic: topic?.topic || 'Unknown',
+            roadmapData: typeof roadmap.roadmap_data === 'string' ? JSON.parse(roadmap.roadmap_data) : roadmap.roadmap_data,
+            createdAt: roadmap.created_at,
+            updatedAt: roadmap.updated_at
+          };
+        });
+        
+        console.log('✅ Transformed roadmaps for user:', transformedData);
+        
+        return transformedData;
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to get user roadmaps: ${error.message}`);
     }
   }
 
   async updateUserRoadmap(roadmapId, roadmapData) {
+    this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('user_roadmaps')
-        .update({ 
-          roadmap_data: roadmapData,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', roadmapId)
-        .select()
-        .single();
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          UPDATE user_roadmaps 
+          SET roadmap_data = $2, updated_at = NOW()
+          WHERE id = $1
+          RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
+        `;
+        
+        const result = await this.pool.query(query, [roadmapId, JSON.stringify(roadmapData)]);
+        return result.rows[0];
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for updating user roadmap');
+        
+        const { data, error } = await this.supabase
+          .from('user_roadmaps')
+          .update({ 
+            roadmap_data: roadmapData,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', roadmapId)
+          .select()
+          .single();
 
-      if (error) throw error;
-      return data;
+        if (error) throw error;
+        return data;
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to update user roadmap: ${error.message}`);
     }
@@ -209,39 +504,238 @@ class SupabaseService {
 
   // User Videos
   async createUserVideos(userRoadmapId, level, videoData) {
+    this._checkConnection();
     try {
-      const { data, error } = await this.supabase
-        .from('user_videos')
-        .insert([{ 
-          user_roadmap_id: userRoadmapId, 
-          level,
-          video_data: videoData 
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const query = `
+        INSERT INTO user_videos (user_roadmap_id, level, video_data)
+        VALUES ($1, $2, $3)
+        RETURNING id, user_roadmap_id, level, video_data, created_at
+      `;
+      
+      const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
+      return result.rows[0];
     } catch (error) {
       throw new Error(`Failed to create user videos: ${error.message}`);
     }
   }
 
+  // Roadmap Progress Management
+  async markRoadmapPointComplete(userId, roadmapId, pointId, isCompleted) {
+    this._checkConnection();
+    try {
+      // Try PostgreSQL first
+      if (this.pool) {
+        // Check if progress record exists
+        const checkQuery = `
+          SELECT * FROM roadmap_progress 
+          WHERE user_id = $1 AND roadmap_id = $2 AND point_id = $3
+        `;
+        const checkResult = await this.pool.query(checkQuery, [userId, roadmapId, pointId]);
+
+        if (checkResult.rows.length > 0) {
+          // Update existing record
+          const updateQuery = `
+            UPDATE roadmap_progress 
+            SET is_completed = $4, completed_at = $5, updated_at = NOW()
+            WHERE user_id = $1 AND roadmap_id = $2 AND point_id = $3
+            RETURNING *
+          `;
+          const completedAt = isCompleted ? new Date().toISOString() : null;
+          const result = await this.pool.query(updateQuery, [userId, roadmapId, pointId, isCompleted, completedAt]);
+          return result.rows[0];
+        } else {
+          // Create new record
+          const insertQuery = `
+            INSERT INTO roadmap_progress (user_id, roadmap_id, point_id, is_completed, completed_at)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+          `;
+          const completedAt = isCompleted ? new Date().toISOString() : null;
+          const result = await this.pool.query(insertQuery, [userId, roadmapId, pointId, isCompleted, completedAt]);
+          return result.rows[0];
+        }
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for roadmap progress');
+        
+        // Check if record exists
+        const { data: existingRecord } = await this.supabase
+          .from('roadmap_progress')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('roadmap_id', roadmapId)
+          .eq('point_id', pointId)
+          .single();
+
+        const completedAt = isCompleted ? new Date().toISOString() : null;
+
+        if (existingRecord) {
+          // Update existing record
+          const { data, error } = await this.supabase
+            .from('roadmap_progress')
+            .update({ 
+              is_completed: isCompleted, 
+              completed_at: completedAt,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', userId)
+            .eq('roadmap_id', roadmapId)
+            .eq('point_id', pointId)
+            .select()
+            .single();
+
+          if (error) throw error;
+          return data;
+        } else {
+          // Create new record
+          const { data, error } = await this.supabase
+            .from('roadmap_progress')
+            .insert([{ 
+              user_id: userId, 
+              roadmap_id: roadmapId, 
+              point_id: pointId,
+              is_completed: isCompleted,
+              completed_at: completedAt
+            }])
+            .select()
+            .single();
+
+          if (error) throw error;
+          return data;
+        }
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to mark roadmap point complete: ${error.message}`);
+    }
+  }
+
+  async getRoadmapProgress(userId, roadmapId) {
+    this._checkConnection();
+    try {
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          SELECT * FROM roadmap_progress 
+          WHERE user_id = $1 AND roadmap_id = $2
+          ORDER BY created_at ASC
+        `;
+        
+        const result = await this.pool.query(query, [userId, roadmapId]);
+        return result.rows || [];
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for getting roadmap progress');
+        
+        const { data, error } = await this.supabase
+          .from('roadmap_progress')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('roadmap_id', roadmapId)
+          .order('created_at', { ascending: true });
+
+        if (error) throw error;
+        return data || [];
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to get roadmap progress: ${error.message}`);
+    }
+  }
+
+  async getAllUserRoadmapProgress(userId) {
+    this._checkConnection();
+    try {
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          SELECT rp.*, ur.roadmap_data 
+          FROM roadmap_progress rp
+          INNER JOIN user_roadmaps ur ON rp.roadmap_id = ur.id
+          INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
+          WHERE ut.user_id = $1
+          ORDER BY rp.created_at ASC
+        `;
+        
+        const result = await this.pool.query(query, [userId]);
+        return result.rows || [];
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for getting all user roadmap progress');
+        
+        // First get user roadmaps
+        const { data: userTopics } = await this.supabase
+          .from('user_topics')
+          .select('id')
+          .eq('user_id', userId);
+
+        if (!userTopics || userTopics.length === 0) {
+          return [];
+        }
+
+        const topicIds = userTopics.map(topic => topic.id);
+
+        const { data: roadmaps } = await this.supabase
+          .from('user_roadmaps')
+          .select('id')
+          .in('user_topic_id', topicIds);
+
+        if (!roadmaps || roadmaps.length === 0) {
+          return [];
+        }
+
+        const roadmapIds = roadmaps.map(roadmap => roadmap.id);
+
+        const { data, error } = await this.supabase
+          .from('roadmap_progress')
+          .select('*')
+          .in('roadmap_id', roadmapIds)
+          .order('created_at', { ascending: true });
+
+        if (error) throw error;
+        return data || [];
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to get all user roadmap progress: ${error.message}`);
+    }
+  }
+
   async getUserVideos(userRoadmapId, level = null) {
     try {
-      let query = this.supabase
-        .from('user_videos')
-        .select('*')
-        .eq('user_roadmap_id', userRoadmapId);
+      if (!this.pool) {
+        throw new Error('PostgreSQL connection not available');
+      }
+      
+      let query = `
+        SELECT * 
+        FROM user_videos 
+        WHERE user_roadmap_id = $1
+      `;
+      let params = [userRoadmapId];
 
       if (level) {
-        query = query.eq('level', level);
+        query += ` AND level = $2`;
+        params.push(level);
       }
 
-      const { data, error } = await query.order('created_at', { ascending: false });
+      query += ` ORDER BY created_at DESC`;
 
-      if (error) throw error;
-      return data || [];
+      const result = await this.pool.query(query, params);
+      
+      // Parse video_data if it's a string
+      const transformedData = result.rows.map(item => ({
+        ...item,
+        video_data: typeof item.video_data === 'string' ? JSON.parse(item.video_data) : item.video_data
+      }));
+      
+      return transformedData;
     } catch (error) {
       throw new Error(`Failed to get user videos: ${error.message}`);
     }

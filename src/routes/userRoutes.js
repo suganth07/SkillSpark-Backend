@@ -253,30 +253,66 @@ router.get('/topics/:userId', async (req, res) => {
   }
 });
 
-// Create user roadmap endpoint
+// Create or update user roadmap endpoint
 router.post('/roadmaps', async (req, res) => {
   try {
     const { userId, topic, roadmapData } = req.body;
 
-    appLogger.info('Creating user roadmap', {
+    appLogger.info('Creating/updating user roadmap', {
       userId,
       topic,
+      roadmapId: roadmapData?.id,
       ip: req.ip,
     });
 
     // First, get or create the user topic
     let userTopic = await supabaseService.getUserTopicByName(userId, topic);
     if (!userTopic) {
+      console.log(`📝 Creating new topic '${topic}' for user ${userId}`);
       userTopic = await supabaseService.createUserTopic(userId, topic);
+    } else {
+      console.log(`📋 Found existing topic '${topic}' for user ${userId}`);
     }
 
-    // Then create the roadmap with the topic ID
-    const roadmap = await supabaseService.createUserRoadmap(userTopic.id, roadmapData);
+    // Check if roadmap already exists for this user and topic
+    const existingRoadmaps = await supabaseService.getUserRoadmaps(userId);
+    console.log(`🔍 User ${userId} has ${existingRoadmaps.length} existing roadmaps`);
+    
+    // Check for exact roadmap ID match first (for updates)
+    let existingRoadmap = existingRoadmaps.find(rm => rm.id === roadmapData.id);
+    
+    // If no exact ID match, check for same topic (to prevent duplicates)
+    if (!existingRoadmap) {
+      existingRoadmap = existingRoadmaps.find(rm => rm.topic === topic);
+    }
+
+    let roadmap;
+    if (existingRoadmap) {
+      // Update existing roadmap
+      console.log(`🔄 Updating existing roadmap ${existingRoadmap.id} for user ${userId}`);
+      roadmap = await supabaseService.updateUserRoadmap(existingRoadmap.id, roadmapData);
+      appLogger.info('Updated existing roadmap', {
+        userId,
+        roadmapId: existingRoadmap.id,
+        topic,
+        ip: req.ip,
+      });
+    } else {
+      // Create new roadmap
+      console.log(`➕ Creating new roadmap for topic '${topic}' for user ${userId}`);
+      roadmap = await supabaseService.createUserRoadmap(userTopic.id, roadmapData);
+      appLogger.info('Created new roadmap', {
+        userId,
+        roadmapId: roadmap.id,
+        topic,
+        ip: req.ip,
+      });
+    }
 
     const successResponse = new SuccessResponse(roadmap);
     res.json(successResponse);
   } catch (error) {
-    appLogger.error('Failed to create user roadmap', error, {
+    appLogger.error('Failed to create/update user roadmap', error, {
       userId: req.body?.userId,
       topic: req.body?.topic,
       ip: req.ip,
@@ -284,8 +320,8 @@ router.post('/roadmaps', async (req, res) => {
 
     const errorResponse = new ErrorResponse(
       new ErrorDetails(
-        'CREATE_ROADMAP_FAILED',
-        'Failed to create user roadmap',
+        'ROADMAP_OPERATION_FAILED',
+        'Failed to save user roadmap',
         process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
       )
     );
@@ -304,7 +340,16 @@ router.get('/roadmaps/:userId', async (req, res) => {
       ip: req.ip,
     });
 
+    console.log('🔍 Fetching roadmaps for user ID:', userId);
+
     const roadmaps = await supabaseService.getUserRoadmaps(userId);
+
+    console.log('📊 Found roadmaps for user:', roadmaps.length);
+    console.log('📋 Roadmap details:', roadmaps.map(rm => ({ 
+      id: rm.id, 
+      topic: rm.topic, 
+      userId: rm.userId 
+    })));
 
     const successResponse = new SuccessResponse(roadmaps);
     res.json(successResponse);
@@ -318,6 +363,175 @@ router.get('/roadmaps/:userId', async (req, res) => {
       new ErrorDetails(
         'FETCH_ROADMAPS_FAILED',
         'Failed to fetch user roadmaps',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Update user roadmap endpoint
+router.put('/roadmaps/:roadmapId', async (req, res) => {
+  try {
+    const { roadmapId } = req.params;
+    const { roadmapData } = req.body;
+
+    appLogger.info('Updating user roadmap', {
+      roadmapId,
+      ip: req.ip,
+    });
+
+    const updatedRoadmap = await supabaseService.updateUserRoadmap(roadmapId, roadmapData);
+
+    const successResponse = new SuccessResponse(updatedRoadmap);
+    res.json(successResponse);
+  } catch (error) {
+    appLogger.error('Failed to update user roadmap', error, {
+      roadmapId: req.params?.roadmapId,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'UPDATE_ROADMAP_FAILED',
+        'Failed to update user roadmap',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Mark roadmap point as complete/incomplete
+router.post('/roadmaps/:roadmapId/progress/:pointId', async (req, res) => {
+  try {
+    const { roadmapId, pointId } = req.params;
+    const { userId, isCompleted } = req.body;
+
+    if (!userId) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails(
+          'MISSING_USER_ID',
+          'User ID is required',
+          'Please provide a valid user ID'
+        )
+      );
+      return res.status(400).json(errorResponse);
+    }
+
+    appLogger.info('Updating roadmap point progress', {
+      roadmapId,
+      pointId,
+      userId,
+      isCompleted,
+      ip: req.ip,
+    });
+
+    const progressRecord = await supabaseService.markRoadmapPointComplete(
+      userId, 
+      roadmapId, 
+      pointId, 
+      isCompleted
+    );
+
+    const successResponse = new SuccessResponse({
+      message: `Roadmap point ${isCompleted ? 'completed' : 'marked as incomplete'}`,
+      progress: progressRecord
+    });
+
+    res.json(successResponse);
+  } catch (error) {
+    appLogger.error('Failed to update roadmap point progress', error, {
+      roadmapId: req.params?.roadmapId,
+      pointId: req.params?.pointId,
+      userId: req.body?.userId,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'UPDATE_PROGRESS_FAILED',
+        'Failed to update roadmap point progress',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Get roadmap progress for a specific roadmap
+router.get('/roadmaps/:roadmapId/progress', async (req, res) => {
+  try {
+    const { roadmapId } = req.params;
+    const { userId } = req.query;
+
+    if (!userId) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails(
+          'MISSING_USER_ID',
+          'User ID is required',
+          'Please provide a valid user ID in query parameters'
+        )
+      );
+      return res.status(400).json(errorResponse);
+    }
+
+    appLogger.info('Fetching roadmap progress', {
+      roadmapId,
+      userId,
+      ip: req.ip,
+    });
+
+    const progress = await supabaseService.getRoadmapProgress(userId, roadmapId);
+
+    const successResponse = new SuccessResponse(progress);
+    res.json(successResponse);
+  } catch (error) {
+    appLogger.error('Failed to fetch roadmap progress', error, {
+      roadmapId: req.params?.roadmapId,
+      userId: req.query?.userId,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'FETCH_PROGRESS_FAILED',
+        'Failed to fetch roadmap progress',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Get all roadmap progress for a user
+router.get('/progress/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    appLogger.info('Fetching all user roadmap progress', {
+      userId,
+      ip: req.ip,
+    });
+
+    const allProgress = await supabaseService.getAllUserRoadmapProgress(userId);
+
+    const successResponse = new SuccessResponse(allProgress);
+    res.json(successResponse);
+  } catch (error) {
+    appLogger.error('Failed to fetch all user roadmap progress', error, {
+      userId: req.params?.userId,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'FETCH_ALL_PROGRESS_FAILED',
+        'Failed to fetch user progress',
         process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
       )
     );
