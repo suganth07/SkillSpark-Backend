@@ -801,37 +801,265 @@ class SupabaseService {
     }
   }
 
-  async getUserVideos(userRoadmapId, level = null) {
+  async storeUserVideos(userRoadmapId, level, videoData) {
     try {
       if (!this.pool) {
         throw new Error('PostgreSQL connection not available');
       }
-      
-      let query = `
-        SELECT * 
-        FROM user_videos 
-        WHERE user_roadmap_id = $1
-      `;
-      let params = [userRoadmapId];
 
-      if (level) {
-        query += ` AND level = $2`;
-        params.push(level);
+      // First check if videos already exist for this level
+      const existingVideos = await this.getUserVideos(userRoadmapId, level);
+      
+      if (existingVideos.length > 0) {
+        // Update existing entry
+        const query = `
+          UPDATE user_videos 
+          SET video_data = $1, updated_at = CURRENT_TIMESTAMP
+          WHERE user_roadmap_id = $2 AND level = $3
+          RETURNING *
+        `;
+        const result = await this.pool.query(query, [JSON.stringify(videoData), userRoadmapId, level]);
+        return result.rows[0];
+      } else {
+        // Insert new entry
+        const query = `
+          INSERT INTO user_videos (user_roadmap_id, level, video_data, created_at, updated_at)
+          VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          RETURNING *
+        `;
+        const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
+        return result.rows[0];
       }
+    } catch (error) {
+      throw new Error(`Failed to store user videos: ${error.message}`);
+    }
+  }
 
-      query += ` ORDER BY created_at DESC`;
+  async getUserVideos(userRoadmapId, level = null, page = 1) {
+    this._checkConnection();
+    try {
+      // Try PostgreSQL first
+      if (this.pool) {
+        let query = `
+          SELECT * 
+          FROM user_videos 
+          WHERE user_roadmap_id = $1
+        `;
+        let params = [userRoadmapId];
 
-      const result = await this.pool.query(query, params);
-      
-      // Parse video_data if it's a string
-      const transformedData = result.rows.map(item => ({
-        ...item,
-        video_data: typeof item.video_data === 'string' ? JSON.parse(item.video_data) : item.video_data
-      }));
-      
-      return transformedData;
+        if (level) {
+          query += ` AND level = $2`;
+          params.push(level);
+        }
+
+        if (page) {
+          query += ` AND page_number = $${params.length + 1}`;
+          params.push(page);
+        }
+
+        query += ` ORDER BY generation_number DESC, created_at DESC`;
+
+        const result = await this.pool.query(query, params);
+        
+        // Parse video_data if it's a string
+        const transformedData = result.rows.map(item => ({
+          ...item,
+          video_data: typeof item.video_data === 'string' ? JSON.parse(item.video_data) : item.video_data
+        }));
+        
+        return transformedData;
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for getting user videos');
+        
+        let query = this.supabase
+          .from('user_videos')
+          .select('*')
+          .eq('user_roadmap_id', userRoadmapId);
+
+        if (level) {
+          query = query.eq('level', level);
+        }
+
+        if (page) {
+          query = query.eq('page_number', page);
+        }
+
+        const { data, error } = await query.order('generation_number', { ascending: false })
+                                           .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        
+        return data || [];
+      } else {
+        throw new Error('No database connection available');
+      }
     } catch (error) {
       throw new Error(`Failed to get user videos: ${error.message}`);
+    }
+  }
+
+  async storeUserVideos(userRoadmapId, level, videoData, pageNumber = 1, isRegenerate = false) {
+    this._checkConnection();
+    try {
+      // If this is a regenerate operation, move existing videos to next pages
+      if (isRegenerate) {
+        await this.moveVideosToNextPage(userRoadmapId, level);
+      }
+
+      // Get the next generation number for this page
+      const generationNumber = await this.getNextGenerationNumber(userRoadmapId, level, pageNumber);
+
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id, user_roadmap_id, level, video_data, page_number, generation_number, created_at
+        `;
+        
+        const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData), pageNumber, generationNumber]);
+        return result.rows[0];
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for storing user videos');
+        
+        // Insert new videos with pagination support
+        const { data, error } = await this.supabase
+          .from('user_videos')
+          .insert([{ 
+            user_roadmap_id: userRoadmapId, 
+            level: level,
+            video_data: videoData,
+            page_number: pageNumber,
+            generation_number: generationNumber
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+        return data;
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to store user videos: ${error.message}`);
+    }
+  }
+
+  async getNextGenerationNumber(userRoadmapId, level, pageNumber) {
+    this._checkConnection();
+    try {
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          SELECT COALESCE(MAX(generation_number), 0) + 1 as next_generation
+          FROM user_videos 
+          WHERE user_roadmap_id = $1 AND level = $2 AND page_number = $3
+        `;
+        
+        const result = await this.pool.query(query, [userRoadmapId, level, pageNumber]);
+        return result.rows[0].next_generation;
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        const { data, error } = await this.supabase
+          .from('user_videos')
+          .select('generation_number')
+          .eq('user_roadmap_id', userRoadmapId)
+          .eq('level', level)
+          .eq('page_number', pageNumber)
+          .order('generation_number', { ascending: false })
+          .limit(1);
+
+        if (error) throw error;
+        
+        return data && data.length > 0 ? data[0].generation_number + 1 : 1;
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to get next generation number: ${error.message}`);
+    }
+  }
+
+  async moveVideosToNextPage(userRoadmapId, level) {
+    this._checkConnection();
+    try {
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          UPDATE user_videos 
+          SET page_number = page_number + 1
+          WHERE user_roadmap_id = $1 AND level = $2
+        `;
+        
+        const result = await this.pool.query(query, [userRoadmapId, level]);
+        return result.rowCount;
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        // First get all existing videos
+        const { data: existingVideos, error: selectError } = await this.supabase
+          .from('user_videos')
+          .select('id, page_number')
+          .eq('user_roadmap_id', userRoadmapId)
+          .eq('level', level);
+
+        if (selectError) throw selectError;
+
+        // Update each video to increment page number
+        for (const video of existingVideos || []) {
+          const { error: updateError } = await this.supabase
+            .from('user_videos')
+            .update({ page_number: video.page_number + 1 })
+            .eq('id', video.id);
+
+          if (updateError) throw updateError;
+        }
+
+        return existingVideos?.length || 0;
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to move videos to next page: ${error.message}`);
+    }
+  }
+
+  async deleteUserVideos(userRoadmapId, level) {
+    this._checkConnection();
+    try {
+      // Try PostgreSQL first
+      if (this.pool) {
+        const query = `
+          DELETE FROM user_videos 
+          WHERE user_roadmap_id = $1 AND level = $2
+          RETURNING id
+        `;
+        
+        const result = await this.pool.query(query, [userRoadmapId, level]);
+        return result.rows.length > 0;
+      }
+      // Fallback to Supabase client
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for deleting user videos');
+        
+        const { error } = await this.supabase
+          .from('user_videos')
+          .delete()
+          .eq('user_roadmap_id', userRoadmapId)
+          .eq('level', level);
+
+        if (error) throw error;
+        return true;
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to delete user videos: ${error.message}`);
     }
   }
 }

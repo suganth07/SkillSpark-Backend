@@ -527,27 +527,114 @@ router.get('/progress/:userId', userDataLimiter, async (req, res) => {
   }
 });
 
-// Test endpoint to check database connection
-router.get('/test-db/:userId', async (req, res) => {
+// Get user videos for a specific roadmap and level
+router.get('/videos/:roadmapId', userDataLimiter, async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { roadmapId } = req.params;
+    const { level, userId, page = 1 } = req.query;
+
+    if (!roadmapId || !userId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Roadmap ID and User ID are required' 
+      });
+    }
+
+    appLogger.info('Getting user videos', {
+      roadmapId,
+      level: level || 'all',
+      userId,
+      page: parseInt(page),
+      ip: req.ip,
+    });
+
+    // Verify that the roadmap belongs to the user
+    const roadmaps = await supabaseService.getUserRoadmaps(userId);
+    const roadmap = roadmaps.find(rm => rm.id === roadmapId);
     
-    // Test basic user query
-    const testUser = await supabaseService.pool?.query('SELECT * FROM users WHERE id = $1', [userId]);
+    if (!roadmap) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Roadmap not found or does not belong to user' 
+      });
+    }
+
+    const videos = await supabaseService.getUserVideos(roadmapId, level, parseInt(page));
     
-    const result = {
-      userExists: testUser?.rows?.length > 0,
-      userId: userId,
-      timestamp: new Date().toISOString(),
-      poolAvailable: !!supabaseService.pool
-    };
-    
-    res.json({ success: true, data: result });
+    console.log(`✅ Found ${videos.length} video records for roadmap: ${roadmapId}, page: ${page}`);
+
+    // Check if there are more pages by trying to fetch the next page
+    let hasMore = false;
+    try {
+      const nextPageVideos = await supabaseService.getUserVideos(roadmapId, level, parseInt(page) + 1);
+      hasMore = nextPageVideos.length > 0;
+    } catch (error) {
+      // If error fetching next page, assume no more pages
+      hasMore = false;
+    }
+
+    const successResponse = new SuccessResponse({
+      videos: videos.length > 0 ? videos[0].video_data : [],
+      page: parseInt(page),
+      hasMore: hasMore
+    });
+
+    res.json(successResponse);
+
   } catch (error) {
+    appLogger.error('Failed to get user videos', error, {
+      roadmapId: req.params?.roadmapId,
+      level: req.query?.level,
+      userId: req.query?.userId,
+      page: req.query?.page,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'GET_VIDEOS_FAILED',
+        'Failed to get user videos',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Test endpoint to check video storage functionality
+router.get('/test-videos/:roadmapId', async (req, res) => {
+  try {
+    const { roadmapId } = req.params;
+    
+    // Test storing some sample videos
+    const sampleVideos = [
+      {
+        id: 'test1',
+        title: 'Test Video 1',
+        videoUrl: 'https://youtube.com/watch?v=test1',
+        duration: '10:30',
+        description: 'Test video description'
+      }
+    ];
+
+    console.log(`🧪 Testing video storage for roadmap: ${roadmapId}`);
+    
+    const stored = await supabaseService.storeUserVideos(roadmapId, 'beginner', sampleVideos);
+    const retrieved = await supabaseService.getUserVideos(roadmapId, 'beginner');
+    
+    res.json({
+      success: true,
+      message: 'Video storage test completed',
+      stored: stored,
+      retrieved: retrieved
+    });
+
+  } catch (error) {
+    console.error('❌ Video storage test failed:', error);
     res.status(500).json({ 
       success: false, 
-      error: error.message,
-      userId: req.params?.userId
+      error: error.message 
     });
   }
 });

@@ -156,8 +156,8 @@ process.on("unhandledRejection", async (reason, promise) => {
   process.exit(1);
 });
 
-app.listen(PORT, "172.19.26.32", () => {
-  console.log(`🚀 Server started successfully on http://172.19.26.32:${PORT}`);
+app.listen(PORT, "localhost", () => {
+  console.log(`🚀 Server started successfully on http://localhost:${PORT}`);
   console.log(`📊 Environment: ${NODE_ENV}`);
   console.log(`📝 Logging to files: ${process.cwd()}/logs/`);
 

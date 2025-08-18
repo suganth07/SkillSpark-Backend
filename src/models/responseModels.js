@@ -164,5 +164,7 @@ export const validatePlaylistRequest = (body) => {
       depth: "Balanced",
       videoLength: "Medium",
     },
+    userRoadmapId: body.userRoadmapId || null,
+    level: body.level || null,
   };
 };
