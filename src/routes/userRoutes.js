@@ -639,4 +639,67 @@ router.get('/test-videos/:roadmapId', async (req, res) => {
   }
 });
 
+// Delete roadmap endpoint
+router.delete('/roadmaps/:roadmapId', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { roadmapId } = req.params;
+    const { userId } = req.query;
+
+    appLogger.info('Deleting roadmap', {
+      roadmapId,
+      userId,
+      ip: req.ip
+    });
+
+    if (!userId) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails('MISSING_USER_ID', 'User ID is required', 'userId query parameter is missing')
+      );
+      return res.status(400).json(errorResponse);
+    }
+
+    if (!roadmapId) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails('MISSING_ROADMAP_ID', 'Roadmap ID is required', 'roadmapId parameter is missing')
+      );
+      return res.status(400).json(errorResponse);
+    }
+
+    // Delete the roadmap
+    await supabaseService.deleteUserRoadmap(roadmapId, userId);
+    
+    const successResponse = new SuccessResponse({
+      message: 'Roadmap deleted successfully',
+      roadmapId: roadmapId
+    });
+    
+    const endTime = Date.now();
+    res.set('Server-Timing', `db;dur=${endTime - startTime}`);
+    res.json(successResponse);
+
+  } catch (error) {
+    console.error('Error deleting roadmap:', error);
+    appLogger.error('Error deleting roadmap', {
+      error: error.message,
+      roadmapId: req.params.roadmapId,
+      userId: req.query.userId,
+      ip: req.ip
+    });
+
+    if (error.message.includes('not found') || error.message.includes('not owned')) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails('ROADMAP_NOT_FOUND', 'Roadmap not found or access denied', error.message)
+      );
+      return res.status(404).json(errorResponse);
+    }
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails('DELETE_ROADMAP_FAILED', 'Failed to delete roadmap', error.message)
+    );
+    res.status(500).json(errorResponse);
+  }
+});
+
 export default router;

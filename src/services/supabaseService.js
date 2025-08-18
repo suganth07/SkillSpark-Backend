@@ -1062,6 +1062,167 @@ class SupabaseService {
       throw new Error(`Failed to delete user videos: ${error.message}`);
     }
   }
+
+  async deleteUserRoadmap(roadmapId, userId) {
+    try {
+      // Use PostgreSQL pool if available
+      if (this.pool) {
+        console.log(`🗑️ Deleting roadmap ${roadmapId} for user ${userId} using PostgreSQL pool`);
+        
+        // First, get the user_topic_id for the roadmap to verify ownership
+        const checkOwnershipQuery = `
+          SELECT ur.user_topic_id 
+          FROM user_roadmaps ur
+          JOIN user_topics ut ON ur.user_topic_id = ut.id
+          WHERE ur.id = $1 AND ut.user_id = $2
+        `;
+        const ownershipResult = await this.pool.query(checkOwnershipQuery, [roadmapId, userId]);
+        
+        if (ownershipResult.rows.length === 0) {
+          throw new Error('Roadmap not found or not owned by user');
+        }
+        
+        const userTopicId = ownershipResult.rows[0].user_topic_id;
+        
+        // Delete in correct order: child tables first, then parent tables
+        
+        // 1. Delete roadmap progress
+        try {
+          const deleteProgressQuery = `DELETE FROM roadmap_progress WHERE roadmap_id = $1`;
+          await this.pool.query(deleteProgressQuery, [roadmapId]);
+          console.log('✅ Deleted roadmap progress');
+        } catch (error) {
+          if (error.message.includes('does not exist')) {
+            console.log('⚠️ roadmap_progress table does not exist, skipping...');
+          } else {
+            throw error;
+          }
+        }
+
+        // 2. Delete user videos
+        try {
+          const deleteVideosQuery = `DELETE FROM user_videos WHERE user_roadmap_id = $1`;
+          await this.pool.query(deleteVideosQuery, [roadmapId]);
+          console.log('✅ Deleted user videos');
+        } catch (error) {
+          if (error.message.includes('does not exist')) {
+            console.log('⚠️ user_videos table does not exist, skipping...');
+          } else {
+            throw error;
+          }
+        }
+
+        // 3. Delete user roadmap
+        const deleteRoadmapQuery = `DELETE FROM user_roadmaps WHERE id = $1`;
+        await this.pool.query(deleteRoadmapQuery, [roadmapId]);
+        console.log('✅ Deleted user roadmap');
+
+        // 4. Delete user topic (if no other roadmaps reference it)
+        const checkOtherRoadmapsQuery = `SELECT COUNT(*) as count FROM user_roadmaps WHERE user_topic_id = $1`;
+        const otherRoadmapsResult = await this.pool.query(checkOtherRoadmapsQuery, [userTopicId]);
+        
+        if (otherRoadmapsResult.rows[0].count == 0) {
+          const deleteTopicQuery = `DELETE FROM user_topics WHERE id = $1`;
+          await this.pool.query(deleteTopicQuery, [userTopicId]);
+          console.log('✅ Deleted user topic (no other roadmaps reference it)');
+        } else {
+          console.log('ℹ️ User topic kept (other roadmaps still reference it)');
+        }
+        
+        console.log(`✅ Successfully deleted roadmap ${roadmapId} and all related data`);
+        return true;
+      }
+      // Fallback to Supabase client using proper Supabase methods
+      else if (this.supabase) {
+        console.log('🔄 Falling back to Supabase client for deleting roadmap');
+        
+        // First, verify ownership and get user_topic_id using proper Supabase query
+        const { data: roadmapData, error: roadmapError } = await this.supabase
+          .from('user_roadmaps')
+          .select(`
+            user_topic_id,
+            user_topics!inner(
+              user_id
+            )
+          `)
+          .eq('id', roadmapId)
+          .eq('user_topics.user_id', userId)
+          .single();
+        
+        if (roadmapError || !roadmapData) {
+          throw new Error('Roadmap not found or not owned by user');
+        }
+        
+        const userTopicId = roadmapData.user_topic_id;
+        
+        // Delete in order using proper Supabase methods
+        
+        // 1. Delete roadmap progress
+        try {
+          const { error: progressError } = await this.supabase
+            .from('roadmap_progress')
+            .delete()
+            .eq('roadmap_id', roadmapId);
+          
+          if (!progressError) {
+            console.log('✅ Deleted roadmap progress');
+          }
+        } catch (error) {
+          console.log('⚠️ Could not delete from roadmap_progress, table may not exist');
+        }
+
+        // 2. Delete user videos
+        try {
+          const { error: videosError } = await this.supabase
+            .from('user_videos')
+            .delete()
+            .eq('user_roadmap_id', roadmapId);
+          
+          if (!videosError) {
+            console.log('✅ Deleted user videos');
+          }
+        } catch (error) {
+          console.log('⚠️ Could not delete from user_videos, table may not exist');
+        }
+
+        // 3. Delete user roadmap
+        const { error: roadmapDeleteError } = await this.supabase
+          .from('user_roadmaps')
+          .delete()
+          .eq('id', roadmapId);
+        
+        if (roadmapDeleteError) {
+          throw roadmapDeleteError;
+        }
+        console.log('✅ Deleted user roadmap');
+
+        // 4. Delete user topic if no other roadmaps reference it
+        const { data: otherRoadmaps, error: countError } = await this.supabase
+          .from('user_roadmaps')
+          .select('id')
+          .eq('user_topic_id', userTopicId);
+        
+        if (!countError && (!otherRoadmaps || otherRoadmaps.length === 0)) {
+          const { error: topicDeleteError } = await this.supabase
+            .from('user_topics')
+            .delete()
+            .eq('id', userTopicId);
+          
+          if (!topicDeleteError) {
+            console.log('✅ Deleted user topic (no other roadmaps reference it)');
+          }
+        } else {
+          console.log('ℹ️ User topic kept (other roadmaps still reference it)');
+        }
+
+        return true;
+      } else {
+        throw new Error('No database connection available');
+      }
+    } catch (error) {
+      throw new Error(`Failed to delete roadmap: ${error.message}`);
+    }
+  }
 }
 
 export default new SupabaseService();
