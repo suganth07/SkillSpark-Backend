@@ -702,4 +702,439 @@ router.delete('/roadmaps/:roadmapId', async (req, res) => {
   }
 });
 
+// User Settings Endpoints
+
+// Get user settings
+router.get('/settings/:userId', userDataLimiter, async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { userId } = req.params;
+
+    appLogger.info('Fetching user settings', {
+      userId,
+      ip: req.ip,
+    });
+
+    const settings = await supabaseService.getUserSettings(userId);
+    
+    // If no settings found, return default settings structure
+    const defaultSettings = {
+      user_id: userId,
+      full_name: null,
+      about_description: null,
+      theme: 'light',
+      default_roadmap_depth: 'detailed',
+      default_video_length: 'medium'
+    };
+
+    const processingTime = Date.now() - startTime;
+
+    appLogger.info('User settings fetched successfully', {
+      userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const successResponse = new SuccessResponse(settings || defaultSettings);
+    res.json(successResponse);
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+
+    appLogger.error('Failed to fetch user settings', error, {
+      userId: req.params?.userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'FETCH_SETTINGS_FAILED',
+        'Failed to fetch user settings',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Update user settings
+router.put('/settings/:userId', userDataLimiter, [
+  body('full_name')
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage('Full name must be less than 100 characters'),
+  body('about_description')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('About description must be less than 1000 characters'),
+  body('theme')
+    .optional()
+    .isIn(['light', 'dark'])
+    .withMessage('Theme must be "light" or "dark"'),
+  body('default_roadmap_depth')
+    .optional()
+    .isIn(['basic', 'detailed', 'comprehensive'])
+    .withMessage('Default roadmap depth must be "basic", "detailed", or "comprehensive"'),
+  body('default_video_length')
+    .optional()
+    .isIn(['short', 'medium', 'long'])
+    .withMessage('Default video length must be "short", "medium", or "long"'),
+], handleValidationErrors, async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { userId } = req.params;
+    const settings = req.body;
+
+    appLogger.info('Updating user settings', {
+      userId,
+      settingsFields: Object.keys(settings),
+      ip: req.ip,
+    });
+
+    // Check if settings exist, if not create them first
+    const existingSettings = await supabaseService.getUserSettings(userId);
+    
+    let updatedSettings;
+    if (!existingSettings) {
+      // Create new settings
+      updatedSettings = await supabaseService.createUserSettings(userId, settings);
+    } else {
+      // Update existing settings
+      updatedSettings = await supabaseService.updateUserSettings(userId, settings);
+    }
+
+    const processingTime = Date.now() - startTime;
+
+    appLogger.info('User settings updated successfully', {
+      userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const successResponse = new SuccessResponse({
+      message: 'Settings updated successfully',
+      settings: updatedSettings
+    });
+
+    res.json(successResponse);
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+
+    appLogger.error('Failed to update user settings', error, {
+      userId: req.params?.userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'UPDATE_SETTINGS_FAILED',
+        'Failed to update user settings',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Create user settings (for initialization)
+router.post('/settings/:userId', userDataLimiter, [
+  body('full_name')
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage('Full name must be less than 100 characters'),
+  body('about_description')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('About description must be less than 1000 characters'),
+  body('theme')
+    .optional()
+    .isIn(['light', 'dark'])
+    .withMessage('Theme must be "light" or "dark"'),
+  body('default_roadmap_depth')
+    .optional()
+    .isIn(['basic', 'detailed', 'comprehensive'])
+    .withMessage('Default roadmap depth must be "basic", "detailed", or "comprehensive"'),
+  body('default_video_length')
+    .optional()
+    .isIn(['short', 'medium', 'long'])
+    .withMessage('Default video length must be "short", "medium", or "long"'),
+], handleValidationErrors, async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { userId } = req.params;
+    const settings = req.body;
+
+    appLogger.info('Creating user settings', {
+      userId,
+      settingsFields: Object.keys(settings),
+      ip: req.ip,
+    });
+
+    const newSettings = await supabaseService.createUserSettings(userId, settings);
+
+    const processingTime = Date.now() - startTime;
+
+    appLogger.info('User settings created successfully', {
+      userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const successResponse = new SuccessResponse({
+      message: 'Settings created successfully',
+      settings: newSettings
+    });
+
+    res.status(201).json(successResponse);
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+
+    appLogger.error('Failed to create user settings', error, {
+      userId: req.params?.userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'CREATE_SETTINGS_FAILED',
+        'Failed to create user settings',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Delete user settings
+router.delete('/settings/:userId', userDataLimiter, async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { userId } = req.params;
+
+    appLogger.info('Deleting user settings', {
+      userId,
+      ip: req.ip,
+    });
+
+    const deleted = await supabaseService.deleteUserSettings(userId);
+
+    if (!deleted) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails(
+          'SETTINGS_NOT_FOUND',
+          'User settings not found',
+          'No settings found for this user'
+        )
+      );
+      return res.status(404).json(errorResponse);
+    }
+
+    const processingTime = Date.now() - startTime;
+
+    appLogger.info('User settings deleted successfully', {
+      userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const successResponse = new SuccessResponse({
+      message: 'Settings deleted successfully'
+    });
+
+    res.json(successResponse);
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+
+    appLogger.error('Failed to delete user settings', error, {
+      userId: req.params?.userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'DELETE_SETTINGS_FAILED',
+        'Failed to delete user settings',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Clear all user data endpoint
+router.delete('/clear-data/:userId', userDataLimiter, async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { userId } = req.params;
+
+    appLogger.info('Clearing all user data', {
+      userId,
+      ip: req.ip,
+    });
+
+    // Delete all user data in correct order (child tables first)
+    
+    // 1. Delete roadmap progress
+    await supabaseService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
+    
+    // 2. Delete user videos (via roadmaps)
+    await supabaseService.pool.query(`
+      DELETE FROM user_videos 
+      WHERE user_roadmap_id IN (
+        SELECT ur.id FROM user_roadmaps ur
+        JOIN user_topics ut ON ur.user_topic_id = ut.id
+        WHERE ut.user_id = $1
+      )
+    `, [userId]);
+    
+    // 3. Delete user roadmaps
+    await supabaseService.pool.query(`
+      DELETE FROM user_roadmaps 
+      WHERE user_topic_id IN (
+        SELECT id FROM user_topics WHERE user_id = $1
+      )
+    `, [userId]);
+    
+    // 4. Delete user topics
+    await supabaseService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
+    
+    // 5. Delete user settings
+    await supabaseService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
+
+    const processingTime = Date.now() - startTime;
+
+    appLogger.info('All user data cleared successfully', {
+      userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const successResponse = new SuccessResponse({
+      message: 'All user data cleared successfully'
+    });
+
+    res.json(successResponse);
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+
+    appLogger.error('Failed to clear user data', error, {
+      userId: req.params?.userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'CLEAR_DATA_FAILED',
+        'Failed to clear user data',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Delete user account endpoint
+router.delete('/account/:userId', userDataLimiter, async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { userId } = req.params;
+
+    appLogger.info('Deleting user account', {
+      userId,
+      ip: req.ip,
+    });
+
+    // Delete all user data first (same as clear data)
+    
+    // 1. Delete roadmap progress
+    await supabaseService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
+    
+    // 2. Delete user videos
+    await supabaseService.pool.query(`
+      DELETE FROM user_videos 
+      WHERE user_roadmap_id IN (
+        SELECT ur.id FROM user_roadmaps ur
+        JOIN user_topics ut ON ur.user_topic_id = ut.id
+        WHERE ut.user_id = $1
+      )
+    `, [userId]);
+    
+    // 3. Delete user roadmaps
+    await supabaseService.pool.query(`
+      DELETE FROM user_roadmaps 
+      WHERE user_topic_id IN (
+        SELECT id FROM user_topics WHERE user_id = $1
+      )
+    `, [userId]);
+    
+    // 4. Delete user topics
+    await supabaseService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
+    
+    // 5. Delete user settings
+    await supabaseService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
+    
+    // 6. Finally delete the user account
+    const userResult = await supabaseService.pool.query('DELETE FROM users WHERE id = $1 RETURNING username', [userId]);
+    
+    if (userResult.rows.length === 0) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails(
+          'USER_NOT_FOUND',
+          'User account not found',
+          'The user account may have already been deleted'
+        )
+      );
+      return res.status(404).json(errorResponse);
+    }
+
+    const processingTime = Date.now() - startTime;
+
+    appLogger.info('User account deleted successfully', {
+      userId,
+      username: userResult.rows[0].username,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const successResponse = new SuccessResponse({
+      message: 'User account deleted successfully'
+    });
+
+    res.json(successResponse);
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+
+    appLogger.error('Failed to delete user account', error, {
+      userId: req.params?.userId,
+      processingTime: `${processingTime}ms`,
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'DELETE_ACCOUNT_FAILED',
+        'Failed to delete user account',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
 export default router;

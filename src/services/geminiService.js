@@ -16,25 +16,33 @@ class GeminiService {
 
   async generateRoadmap(
     topic,
-    userPreferences = { depth: "Balanced", videoLength: "Medium" }
+    userPreferences = { default_roadmap_depth: "detailed", default_video_length: "medium" }
   ) {
     try {
-      // Map user preferences to generation parameters
+      // Map new user preferences structure to generation parameters
       const depthMapping = {
-        Fast: { points: 3, detail: "concise" },
-        Balanced: { points: 4, detail: "balanced" },
-        Detailed: { points: 5, detail: "comprehensive" },
+        basic: { points: 3, detail: "concise", approach: "Fast" },
+        detailed: { points: 4, detail: "balanced", approach: "Balanced" },
+        comprehensive: { points: 6, detail: "comprehensive", approach: "Detailed" },
+      };
+
+      const videoLengthMapping = {
+        short: "Short",
+        medium: "Medium", 
+        long: "Long"
       };
 
       const currentDepth =
-        depthMapping[userPreferences.depth] || depthMapping["Balanced"];
+        depthMapping[userPreferences.default_roadmap_depth] || depthMapping["detailed"];
+      const videoLength = 
+        videoLengthMapping[userPreferences.default_video_length] || "Medium";
 
       const prompt = `
         Create a comprehensive learning roadmap for: "${topic}"
         
         User preferences:
-        - Depth: ${userPreferences.depth} (${currentDepth.detail} approach)
-        - Video Length Preference: ${userPreferences.videoLength}
+        - Depth: ${currentDepth.approach} (${currentDepth.detail} approach with ${currentDepth.points} main points)
+        - Video Length Preference: ${videoLength}
         
         First, extract the main technology/topic from the query "${topic}". For example:
         - "help me learning with java" -> "java"
@@ -51,7 +59,7 @@ class GeminiService {
         Each level should contain only the topic names as strings, no descriptions or additional information.
         Make the topics ${
           currentDepth.detail
-        } and appropriate for someone who prefers ${userPreferences.videoLength.toLowerCase()} learning sessions.
+        } and appropriate for someone who prefers ${videoLength.toLowerCase()} learning sessions.
         
         Format the response as a JSON structure with the following schema:
         {
@@ -96,22 +104,22 @@ class GeminiService {
   async generateVideoTitles(
     topic,
     pointTitle,
-    userPreferences = { depth: "Balanced", videoLength: "Medium" }
+    userPreferences = { default_roadmap_depth: "detailed", default_video_length: "medium" }
   ) {
     try {
       const videoLengthMapping = {
-        Short: {
+        short: {
           duration: "8-15 minutes",
           type: "focused tutorials, quick guides, or essential concepts",
           keywords: "tutorial, guide, explained, basics, intro, quick",
         },
-        Medium: {
+        medium: {
           duration: "15-30 minutes",
           type: "comprehensive tutorials with examples and practice",
           keywords:
             "complete guide, full tutorial, step by step, masterclass, course",
         },
-        Long: {
+        long: {
           duration: "30+ minutes",
           type: "in-depth courses, complete walkthroughs, or project-based learning",
           keywords:
@@ -120,17 +128,17 @@ class GeminiService {
       };
 
       const depthMapping = {
-        Fast: {
+        basic: {
           approach: "quick overview with key points",
           complexity: "beginner-friendly with clear examples",
           focus: "essential concepts and practical application",
         },
-        Balanced: {
+        detailed: {
           approach: "thorough coverage with examples and practice",
           complexity: "intermediate level with real-world scenarios",
           focus: "balanced theory and hands-on practice",
         },
-        Detailed: {
+        comprehensive: {
           approach: "comprehensive deep-dive with advanced concepts",
           complexity:
             "detailed explanations with edge cases and best practices",
@@ -139,10 +147,10 @@ class GeminiService {
       };
 
       const videoLength =
-        videoLengthMapping[userPreferences.videoLength] ||
-        videoLengthMapping["Medium"];
+        videoLengthMapping[userPreferences.default_video_length] ||
+        videoLengthMapping["medium"];
       const depth =
-        depthMapping[userPreferences.depth] || depthMapping["Balanced"];
+        depthMapping[userPreferences.default_roadmap_depth] || depthMapping["detailed"];
 
       const prompt = `
         Generate 5 diverse and specific YouTube video titles for learning "${pointTitle}" in the context of "${topic}".

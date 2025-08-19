@@ -9,6 +9,7 @@ import {
   validateRoadmapRequest,
 } from "../models/responseModels.js";
 import geminiService from "../services/geminiService.js";
+import supabaseService from "../services/supabaseService.js";
 import {
   generateId,
   getCurrentTimestamp,
@@ -30,18 +31,52 @@ router.post(
     const startTime = Date.now();
 
     try {
-      const { topic, userPreferences } = validateRoadmapRequest(req.body);
+      const { topic, userPreferences, userId } = validateRoadmapRequest(req.body);
 
       appLogger.info("Generating roadmap", {
         topic,
+        userId,
         userPreferences,
         ip: req.ip,
         userAgent: req.get("user-agent"),
       });
 
+      // Get user settings to use as preferences if userId is provided
+      let finalUserPreferences = userPreferences || {};
+      
+      if (userId) {
+        try {
+          const userSettings = await supabaseService.getUserSettings(userId);
+          
+          // Use user settings as default preferences, but allow override from request
+          finalUserPreferences = {
+            default_roadmap_depth: userPreferences?.default_roadmap_depth || userSettings.default_roadmap_depth || 'detailed',
+            default_video_length: userPreferences?.default_video_length || userSettings.default_video_length || 'medium'
+          };
+          
+          appLogger.info("Using user settings for roadmap generation", {
+            userId,
+            finalUserPreferences,
+            ip: req.ip,
+          });
+        } catch (settingsError) {
+          appLogger.warn("Could not fetch user settings, using defaults", {
+            userId,
+            error: settingsError.message,
+            ip: req.ip,
+          });
+          
+          // Fall back to request preferences or defaults
+          finalUserPreferences = {
+            default_roadmap_depth: userPreferences?.default_roadmap_depth || 'detailed',
+            default_video_length: userPreferences?.default_video_length || 'medium'
+          };
+        }
+      }
+
       const roadmapData = await geminiService.generateRoadmap(
         topic,
-        userPreferences
+        finalUserPreferences
       );
 
       const extractedTopic = roadmapData.extractedTopic || "programming";
@@ -93,6 +128,7 @@ router.post(
         topic: extractedTopic,
         pointsCount: points.length,
         processingTime: `${processingTime}ms`,
+        userPreferences: finalUserPreferences,
         ip: req.ip,
       });
 
@@ -102,6 +138,7 @@ router.post(
 
       appLogger.error("Error generating roadmap", error, {
         topic: req.body?.topic,
+        userId: req.body?.userId,
         userPreferences: req.body?.userPreferences,
         processingTime: `${processingTime}ms`,
         ip: req.ip,

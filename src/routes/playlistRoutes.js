@@ -44,7 +44,7 @@ router.post(
     const startTime = Date.now();
 
     try {
-      const { topic, pointTitle, userPreferences, userRoadmapId, level } = validatePlaylistRequest(
+      const { topic, pointTitle, userPreferences, userRoadmapId, level, userId } = validatePlaylistRequest(
         req.body
       );
 
@@ -54,9 +54,43 @@ router.post(
         userPreferences,
         userRoadmapId,
         level,
+        userId,
         ip: req.ip,
         userAgent: req.get("user-agent"),
       });
+
+      // Get user settings to use as preferences if userId is provided
+      let finalUserPreferences = userPreferences || {};
+      
+      if (userId) {
+        try {
+          const userSettings = await supabaseService.getUserSettings(userId);
+          
+          // Use user settings as default preferences, but allow override from request
+          finalUserPreferences = {
+            default_roadmap_depth: userPreferences?.default_roadmap_depth || userSettings.default_roadmap_depth || 'detailed',
+            default_video_length: userPreferences?.default_video_length || userSettings.default_video_length || 'medium'
+          };
+          
+          appLogger.info("Using user settings for playlist generation", {
+            userId,
+            finalUserPreferences,
+            ip: req.ip,
+          });
+        } catch (settingsError) {
+          appLogger.warn("Could not fetch user settings for playlist generation, using defaults", {
+            userId,
+            error: settingsError.message,
+            ip: req.ip,
+          });
+          
+          // Fall back to request preferences or defaults
+          finalUserPreferences = {
+            default_roadmap_depth: userPreferences?.default_roadmap_depth || 'detailed',
+            default_video_length: userPreferences?.default_video_length || 'medium'
+          };
+        }
+      }
 
       let playlists = [];
 
@@ -102,7 +136,7 @@ router.post(
       const videoTitles = await geminiService.generateVideoTitles(
         topic,
         pointTitle,
-        userPreferences
+        finalUserPreferences
       );
 
       appLogger.info("Generated video titles", {
@@ -110,13 +144,14 @@ router.post(
         pointTitle,
         titlesCount: videoTitles.length,
         titles: videoTitles,
+        userPreferences: finalUserPreferences,
         ip: req.ip,
       });
 
       // Use the improved searchMultipleVideos method
       const videoResults = await youtubeService.searchMultipleVideos(
         videoTitles,
-        userPreferences
+        finalUserPreferences
       );
 
       playlists = [];
@@ -158,13 +193,13 @@ router.post(
         const fallbackTitles = await generateFallbackTitles(
           topic,
           pointTitle,
-          userPreferences,
+          finalUserPreferences,
           usedVideoIds
         );
 
         const fallbackResults = await youtubeService.searchMultipleVideos(
           fallbackTitles,
-          userPreferences
+          finalUserPreferences
         );
 
         for (const result of fallbackResults) {
@@ -199,6 +234,7 @@ router.post(
         totalRequested: videoTitles.length,
         successCount: playlists.length,
         processingTime: `${processingTime}ms`,
+        userPreferences: finalUserPreferences,
         ip: req.ip,
       });
 
@@ -232,6 +268,7 @@ router.post(
         topic: req.body?.topic,
         pointTitle: req.body?.pointTitle,
         userPreferences: req.body?.userPreferences,
+        userId: req.body?.userId,
         processingTime: `${processingTime}ms`,
         ip: req.ip,
         userAgent: req.get("user-agent"),
@@ -261,7 +298,7 @@ router.post(
     const startTime = Date.now();
 
     try {
-      const { topic, pointTitle, userPreferences, userRoadmapId, level } = validatePlaylistRequest(
+      const { topic, pointTitle, userPreferences, userRoadmapId, level, userId } = validatePlaylistRequest(
         req.body
       );
 
@@ -283,15 +320,49 @@ router.post(
         userPreferences,
         userRoadmapId,
         level,
+        userId,
         ip: req.ip,
         userAgent: req.get("user-agent"),
       });
+
+      // Get user settings to use as preferences if userId is provided
+      let finalUserPreferences = userPreferences || {};
+      
+      if (userId) {
+        try {
+          const userSettings = await supabaseService.getUserSettings(userId);
+          
+          // Use user settings as default preferences, but allow override from request
+          finalUserPreferences = {
+            defaultRoadmapDepth: userPreferences?.defaultRoadmapDepth || userSettings.default_roadmap_depth || 'detailed',
+            defaultVideoLength: userPreferences?.defaultVideoLength || userSettings.default_video_length || 'medium'
+          };
+          
+          appLogger.info("Using user settings for playlist regeneration", {
+            userId,
+            finalUserPreferences,
+            ip: req.ip,
+          });
+        } catch (settingsError) {
+          appLogger.warn("Could not fetch user settings for playlist regeneration, using defaults", {
+            userId,
+            error: settingsError.message,
+            ip: req.ip,
+          });
+          
+          // Fall back to request preferences or defaults
+          finalUserPreferences = {
+            defaultRoadmapDepth: userPreferences?.defaultRoadmapDepth || 'detailed',
+            defaultVideoLength: userPreferences?.defaultVideoLength || 'medium'
+          };
+        }
+      }
 
       // Generate new videos
       const videoTitles = await geminiService.generateVideoTitles(
         topic,
         pointTitle,
-        userPreferences
+        finalUserPreferences
       );
 
       appLogger.info("Generated video titles for regeneration", {
@@ -299,13 +370,14 @@ router.post(
         pointTitle,
         titlesCount: videoTitles.length,
         titles: videoTitles,
+        userPreferences: finalUserPreferences,
         ip: req.ip,
       });
 
       // Use the improved searchMultipleVideos method
       const videoResults = await youtubeService.searchMultipleVideos(
         videoTitles,
-        userPreferences
+        finalUserPreferences
       );
 
       const playlists = [];
@@ -347,13 +419,13 @@ router.post(
         const fallbackTitles = await generateFallbackTitles(
           topic,
           pointTitle,
-          userPreferences,
+          finalUserPreferences,
           usedVideoIds
         );
 
         const fallbackResults = await youtubeService.searchMultipleVideos(
           fallbackTitles,
-          userPreferences
+          finalUserPreferences
         );
 
         for (const result of fallbackResults) {
@@ -388,6 +460,7 @@ router.post(
         totalRequested: videoTitles.length,
         successCount: playlists.length,
         processingTime: `${processingTime}ms`,
+        userPreferences: finalUserPreferences,
         ip: req.ip,
       });
 
@@ -431,6 +504,7 @@ router.post(
         userPreferences: req.body?.userPreferences,
         userRoadmapId: req.body?.userRoadmapId,
         level: req.body?.level,
+        userId: req.body?.userId,
         processingTime: `${processingTime}ms`,
         ip: req.ip,
         userAgent: req.get("user-agent"),

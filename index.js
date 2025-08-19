@@ -41,7 +41,7 @@ app.use(compression());
 const corsOptions = {
   origin: process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
-    : ["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19000", "http://127.0.0.1:19000"],
+    : ["http://10.104.238.32:8081", "http://127.0.0.1:8081", "http://10.104.238.32:19000", "http://127.0.0.1:19000"],
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -156,8 +156,8 @@ process.on("unhandledRejection", async (reason, promise) => {
   process.exit(1);
 });
 
-app.listen(PORT, "localhost", () => {
-  console.log(`🚀 Server started successfully on http://localhost:${PORT}`);
+app.listen(PORT, "10.104.238.32", () => {
+  console.log(`🚀 Server started successfully on http://10.104.238.32:${PORT}`);
   console.log(`📊 Environment: ${NODE_ENV}`);
   console.log(`📝 Logging to files: ${process.cwd()}/logs/`);
 

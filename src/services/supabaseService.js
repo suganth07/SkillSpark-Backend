@@ -323,14 +323,14 @@ class SupabaseService {
     }
   }
 
-  // User Videos
+  // User Videos (Weak Entity - no id column)
   async createUserVideos(userRoadmapId, level, videoData) {
     this._checkConnection();
     try {
       const query = `
-        INSERT INTO user_videos (user_roadmap_id, level, video_data)
-        VALUES ($1, $2, $3)
-        RETURNING id, user_roadmap_id, level, video_data, created_at
+        INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number)
+        VALUES ($1, $2, $3, 1, 1)
+        RETURNING user_roadmap_id, level, video_data, page_number, generation_number, created_at
       `;
       
       const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
@@ -416,24 +416,31 @@ class SupabaseService {
   async storeUserVideos(userRoadmapId, level, videoData) {
     this._checkConnection();
     try {
-      // First check if videos already exist for this level
-      const existingVideos = await this.getUserVideos(userRoadmapId, level);
+      // First check if videos already exist for this level (get the latest generation)
+      const existingVideos = await this.getUserVideos(userRoadmapId, level, 1);
       
       if (existingVideos.length > 0) {
-        // Update existing entry
+        // Update the latest generation entry for page 1
+        const latestVideo = existingVideos[0]; // Already ordered by generation_number DESC
         const query = `
           UPDATE user_videos 
           SET video_data = $1, updated_at = CURRENT_TIMESTAMP
-          WHERE user_roadmap_id = $2 AND level = $3
+          WHERE user_roadmap_id = $2 AND level = $3 AND page_number = $4 AND generation_number = $5
           RETURNING *
         `;
-        const result = await this.pool.query(query, [JSON.stringify(videoData), userRoadmapId, level]);
+        const result = await this.pool.query(query, [
+          JSON.stringify(videoData), 
+          userRoadmapId, 
+          level, 
+          latestVideo.page_number, 
+          latestVideo.generation_number
+        ]);
         return result.rows[0];
       } else {
         // Insert new entry
         const query = `
-          INSERT INTO user_videos (user_roadmap_id, level, video_data, created_at, updated_at)
-          VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number, created_at, updated_at)
+          VALUES ($1, $2, $3, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           RETURNING *
         `;
         const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
@@ -494,7 +501,7 @@ class SupabaseService {
       const query = `
         INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, user_roadmap_id, level, video_data, page_number, generation_number, created_at
+        RETURNING user_roadmap_id, level, video_data, page_number, generation_number, created_at
       `;
       
       const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData), pageNumber, generationNumber]);
@@ -542,7 +549,7 @@ class SupabaseService {
       const query = `
         DELETE FROM user_videos 
         WHERE user_roadmap_id = $1 AND level = $2
-        RETURNING id
+        RETURNING user_roadmap_id, level
       `;
       
       const result = await this.pool.query(query, [userRoadmapId, level]);
@@ -621,6 +628,125 @@ class SupabaseService {
       return true;
     } catch (error) {
       throw new Error(`Failed to delete roadmap: ${error.message}`);
+    }
+  }
+
+  // User Settings Management
+  async createUserSettings(userId, settings = {}) {
+    this._checkConnection();
+    try {
+      const {
+        full_name = null,
+        about_description = null,
+        theme = 'light',
+        default_roadmap_depth = 'detailed',
+        default_video_length = 'medium'
+      } = settings;
+
+      const query = `
+        INSERT INTO user_settings (
+          user_id, full_name, about_description, theme, 
+          default_roadmap_depth, default_video_length
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `;
+      
+      const result = await this.pool.query(query, [
+        userId, full_name, about_description, theme, 
+        default_roadmap_depth, default_video_length
+      ]);
+      
+      return result.rows[0];
+    } catch (error) {
+      throw new Error(`Failed to create user settings: ${error.message}`);
+    }
+  }
+
+  async getUserSettings(userId) {
+    this._checkConnection();
+    try {
+      const query = `
+        SELECT * FROM user_settings WHERE user_id = $1
+      `;
+      
+      const result = await this.pool.query(query, [userId]);
+      
+      // If no settings exist, return null (don't auto-create)
+      if (result.rows.length === 0) {
+        return null;
+      }
+      
+      return result.rows[0];
+    } catch (error) {
+      throw new Error(`Failed to get user settings: ${error.message}`);
+    }
+  }
+
+  async updateUserSettings(userId, settings) {
+    this._checkConnection();
+    try {
+      const updateFields = [];
+      const values = [userId];
+      let paramCount = 1;
+
+      // Build dynamic update query based on provided fields
+      if (settings.full_name !== undefined) {
+        updateFields.push(`full_name = $${++paramCount}`);
+        values.push(settings.full_name);
+      }
+      
+      if (settings.about_description !== undefined) {
+        updateFields.push(`about_description = $${++paramCount}`);
+        values.push(settings.about_description);
+      }
+      
+      if (settings.theme !== undefined) {
+        updateFields.push(`theme = $${++paramCount}`);
+        values.push(settings.theme);
+      }
+      
+      if (settings.default_roadmap_depth !== undefined) {
+        updateFields.push(`default_roadmap_depth = $${++paramCount}`);
+        values.push(settings.default_roadmap_depth);
+      }
+      
+      if (settings.default_video_length !== undefined) {
+        updateFields.push(`default_video_length = $${++paramCount}`);
+        values.push(settings.default_video_length);
+      }
+
+      if (updateFields.length === 0) {
+        // No fields to update, return current settings
+        return await this.getUserSettings(userId);
+      }
+
+      const query = `
+        UPDATE user_settings 
+        SET ${updateFields.join(', ')}, updated_at = NOW()
+        WHERE user_id = $1
+        RETURNING *
+      `;
+      
+      const result = await this.pool.query(query, values);
+      return result.rows[0];
+    } catch (error) {
+      throw new Error(`Failed to update user settings: ${error.message}`);
+    }
+  }
+
+  async deleteUserSettings(userId) {
+    this._checkConnection();
+    try {
+      const query = `
+        DELETE FROM user_settings WHERE user_id = $1
+        RETURNING id
+      `;
+      
+      const result = await this.pool.query(query, [userId]);
+      return result.rows.length > 0;
+    } catch (error) {
+      throw new Error(`Failed to delete user settings: ${error.message}`);
     }
   }
 }
