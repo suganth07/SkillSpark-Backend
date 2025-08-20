@@ -23,12 +23,18 @@ class SupabaseService {
           rejectUnauthorized: false,
           require: true
         },
-        // Add connection pool settings for better performance
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-        query_timeout: 60000,
-        statement_timeout: 60000,
+        // Improved connection pool settings for better performance and timeout handling
+        max: 10,                      // Maximum number of clients in pool
+        min: 2,                       // Minimum number of clients in pool
+        idleTimeoutMillis: 30000,     // Close idle clients after 30 seconds
+        connectionTimeoutMillis: 8000, // Timeout for acquiring connection (increased)
+        acquireTimeoutMillis: 60000,   // Timeout for acquiring connection from pool
+        createTimeoutMillis: 10000,    // Timeout for creating new connection
+        destroyTimeoutMillis: 5000,    // Timeout for destroying connection
+        reapIntervalMillis: 1000,      // How often to check for idle connections
+        createRetryIntervalMillis: 200, // Retry interval for failed connections
+        query_timeout: 15000,          // Query timeout (increased)
+        statement_timeout: 15000,      // Statement timeout (increased)
       });
 
       // Add error handling for pool events
@@ -81,6 +87,43 @@ class SupabaseService {
         console.error('❌ Error closing PostgreSQL pool:', error.message);
       }
       this.pool = null;
+    }
+  }
+
+  // Helper method for executing queries with proper timeout and connection management
+  async executeQuery(query, params = [], timeout = 10000) {
+    this._checkConnection();
+    let client;
+    
+    try {
+      // Get client from pool with timeout
+      client = await Promise.race([
+        this.pool.connect(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connection acquisition timeout')), 5000)
+        )
+      ]);
+      
+      console.log('🔗 Client acquired from pool');
+      
+      // Execute query with timeout
+      const result = await Promise.race([
+        client.query(query, params),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Query execution timeout')), timeout)
+        )
+      ]);
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Query execution error:', error.message);
+      throw error;
+    } finally {
+      if (client) {
+        client.release();
+        console.log('🔌 Client released back to pool');
+      }
     }
   }
 
@@ -225,8 +268,9 @@ class SupabaseService {
   }
 
   async getUserRoadmaps(userId) {
-    this._checkConnection();
     try {
+      console.log('🔍 Fetching roadmaps for user ID:', userId);
+      
       const query = `
         SELECT 
           ur.id,
@@ -241,7 +285,7 @@ class SupabaseService {
         ORDER BY ur.created_at DESC
       `;
       
-      const result = await this.pool.query(query, [userId]);
+      const result = await this.executeQuery(query, [userId], 10000);
       
       // Get progress data for all roadmaps
       const progressQuery = `
@@ -252,7 +296,7 @@ class SupabaseService {
         WHERE ut.user_id = $1
       `;
       
-      const progressResult = await this.pool.query(progressQuery, [userId]);
+      const progressResult = await this.executeQuery(progressQuery, [userId], 10000);
       const progressMap = new Map();
       
       // Group progress by roadmap_id
@@ -664,27 +708,30 @@ class SupabaseService {
   }
 
   async getUserSettings(userId) {
-    this._checkConnection();
     try {
+      console.log('🔍 Fetching user settings for user ID:', userId);
+      
       const query = `
         SELECT * FROM user_settings WHERE user_id = $1
       `;
       
-      const result = await this.pool.query(query, [userId]);
+      const result = await this.executeQuery(query, [userId], 8000);
       
       // If no settings exist, return null (don't auto-create)
       if (result.rows.length === 0) {
+        console.log('⚠️  No user settings found for user:', userId);
         return null;
       }
       
+      console.log('✅ User settings found successfully');
       return result.rows[0];
     } catch (error) {
+      console.error('❌ Error in getUserSettings:', error.message);
       throw new Error(`Failed to get user settings: ${error.message}`);
     }
   }
 
   async updateUserSettings(userId, settings) {
-    this._checkConnection();
     try {
       const updateFields = [];
       const values = [userId];
@@ -728,9 +775,10 @@ class SupabaseService {
         RETURNING *
       `;
       
-      const result = await this.pool.query(query, values);
+      const result = await this.executeQuery(query, values, 8000);
       return result.rows[0];
     } catch (error) {
+      console.error('❌ Error in updateUserSettings:', error.message);
       throw new Error(`Failed to update user settings: ${error.message}`);
     }
   }
