@@ -1,5 +1,7 @@
--- ✅ COMPLETE USER SETTINGS TABLE SETUP
--- Copy and paste this entire script into Supabase SQL Editor and run it
+-- Complete user settings table setup for Neon Database
+-- Copy and paste this entire script into Neon SQL Console and run it
+-- Complete user settings table setup for Neon Database
+-- Copy and paste this entire script into Neon SQL Console and run it
 
 -- Create the user_settings table with your preferred structure
 CREATE TABLE IF NOT EXISTS public.user_settings (

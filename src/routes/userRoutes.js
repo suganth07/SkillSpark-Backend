@@ -1,6 +1,6 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
-import supabaseService from '../services/supabaseService.js';
+import neonDbService from '../services/neonDbService.js';
 import { SuccessResponse, ErrorResponse, ErrorDetails } from '../models/responseModels.js';
 import { appLogger } from '../utils/logger.js';
 import { userDataLimiter } from '../middleware/security.js';
@@ -57,7 +57,7 @@ router.post('/register', authLimiter, validateRegister, handleValidationErrors, 
     });
 
     // Check if user already exists
-    const userExists = await supabaseService.checkUserExists(username);
+    const userExists = await neonDbService.checkUserExists(username);
     if (userExists) {
       const errorResponse = new ErrorResponse(
         new ErrorDetails(
@@ -70,7 +70,7 @@ router.post('/register', authLimiter, validateRegister, handleValidationErrors, 
     }
 
     // Create new user
-    const user = await supabaseService.createUser(username, password);
+    const user = await neonDbService.createUser(username, password);
 
     const processingTime = Date.now() - startTime;
 
@@ -124,7 +124,7 @@ router.post('/login', authLimiter, validateLogin, handleValidationErrors, async 
     });
 
     // Authenticate user
-    const user = await supabaseService.getUserByCredentials(username, password);
+    const user = await neonDbService.getUserByCredentials(username, password);
     if (!user) {
       const errorResponse = new ErrorResponse(
         new ErrorDetails(
@@ -185,7 +185,7 @@ router.post('/topics', async (req, res) => {
       ip: req.ip,
     });
 
-    const topicData = await supabaseService.createUserTopic(userId, topic);
+    const topicData = await neonDbService.createUserTopic(userId, topic);
 
     const successResponse = new SuccessResponse(topicData);
     res.json(successResponse);
@@ -218,7 +218,7 @@ router.get('/topics/:userId', async (req, res) => {
       ip: req.ip,
     });
 
-    const topics = await supabaseService.getUserTopics(userId);
+    const topics = await neonDbService.getUserTopics(userId);
 
     const successResponse = new SuccessResponse(topics);
     res.json(successResponse);
@@ -253,16 +253,16 @@ router.post('/roadmaps', async (req, res) => {
     });
 
     // First, get or create the user topic
-    let userTopic = await supabaseService.getUserTopicByName(userId, topic);
+    let userTopic = await neonDbService.getUserTopicByName(userId, topic);
     if (!userTopic) {
       console.log(`📝 Creating new topic '${topic}' for user ${userId}`);
-      userTopic = await supabaseService.createUserTopic(userId, topic);
+      userTopic = await neonDbService.createUserTopic(userId, topic);
     } else {
       console.log(`📋 Found existing topic '${topic}' for user ${userId}`);
     }
 
     // Check if roadmap already exists for this user and topic
-    const existingRoadmaps = await supabaseService.getUserRoadmaps(userId);
+    const existingRoadmaps = await neonDbService.getUserRoadmaps(userId);
     console.log(`🔍 User ${userId} has ${existingRoadmaps.length} existing roadmaps`);
     
     // Check for exact roadmap ID match first (for updates)
@@ -277,7 +277,7 @@ router.post('/roadmaps', async (req, res) => {
     if (existingRoadmap) {
       // Update existing roadmap
       console.log(`🔄 Updating existing roadmap ${existingRoadmap.id} for user ${userId}`);
-      roadmap = await supabaseService.updateUserRoadmap(existingRoadmap.id, roadmapData);
+      roadmap = await neonDbService.updateUserRoadmap(existingRoadmap.id, roadmapData);
       appLogger.info('Updated existing roadmap', {
         userId,
         roadmapId: existingRoadmap.id,
@@ -287,7 +287,7 @@ router.post('/roadmaps', async (req, res) => {
     } else {
       // Create new roadmap
       console.log(`➕ Creating new roadmap for topic '${topic}' for user ${userId}`);
-      roadmap = await supabaseService.createUserRoadmap(userTopic.id, roadmapData);
+      roadmap = await neonDbService.createUserRoadmap(userTopic.id, roadmapData);
       appLogger.info('Created new roadmap', {
         userId,
         roadmapId: roadmap.id,
@@ -329,7 +329,7 @@ router.get('/roadmaps/:userId', userDataLimiter, async (req, res) => {
 
     console.log('🔍 Fetching roadmaps for user ID:', userId);
 
-    const roadmaps = await supabaseService.getUserRoadmaps(userId);
+    const roadmaps = await neonDbService.getUserRoadmaps(userId);
 
     console.log('📊 Found roadmaps for user:', roadmaps.length);
     console.log('📋 Roadmap details:', roadmaps.map(rm => ({ 
@@ -369,7 +369,7 @@ router.put('/roadmaps/:roadmapId', async (req, res) => {
       ip: req.ip,
     });
 
-    const updatedRoadmap = await supabaseService.updateUserRoadmap(roadmapId, roadmapData);
+    const updatedRoadmap = await neonDbService.updateUserRoadmap(roadmapId, roadmapData);
 
     const successResponse = new SuccessResponse(updatedRoadmap);
     res.json(successResponse);
@@ -416,7 +416,7 @@ router.post('/roadmaps/:roadmapId/progress/:pointId', async (req, res) => {
       ip: req.ip,
     });
 
-    const progressRecord = await supabaseService.markRoadmapPointComplete(
+    const progressRecord = await neonDbService.markRoadmapPointComplete(
       userId, 
       roadmapId, 
       pointId, 
@@ -472,7 +472,7 @@ router.get('/roadmaps/:roadmapId/progress', async (req, res) => {
       ip: req.ip,
     });
 
-    const progress = await supabaseService.getRoadmapProgress(userId, roadmapId);
+    const progress = await neonDbService.getRoadmapProgress(userId, roadmapId);
 
     const successResponse = new SuccessResponse(progress);
     res.json(successResponse);
@@ -505,7 +505,7 @@ router.get('/progress/:userId', userDataLimiter, async (req, res) => {
       ip: req.ip,
     });
 
-    const allProgress = await supabaseService.getAllUserRoadmapProgress(userId);
+    const allProgress = await neonDbService.getAllUserRoadmapProgress(userId);
 
     const successResponse = new SuccessResponse(allProgress);
     res.json(successResponse);
@@ -549,7 +549,7 @@ router.get('/videos/:roadmapId', userDataLimiter, async (req, res) => {
     });
 
     // Verify that the roadmap belongs to the user
-    const roadmaps = await supabaseService.getUserRoadmaps(userId);
+    const roadmaps = await neonDbService.getUserRoadmaps(userId);
     const roadmap = roadmaps.find(rm => rm.id === roadmapId);
     
     if (!roadmap) {
@@ -559,14 +559,14 @@ router.get('/videos/:roadmapId', userDataLimiter, async (req, res) => {
       });
     }
 
-    const videos = await supabaseService.getUserVideos(roadmapId, level, parseInt(page));
+    const videos = await neonDbService.getUserVideos(roadmapId, level, parseInt(page));
     
     console.log(`✅ Found ${videos.length} video records for roadmap: ${roadmapId}, page: ${page}`);
 
     // Check if there are more pages by trying to fetch the next page
     let hasMore = false;
     try {
-      const nextPageVideos = await supabaseService.getUserVideos(roadmapId, level, parseInt(page) + 1);
+      const nextPageVideos = await neonDbService.getUserVideos(roadmapId, level, parseInt(page) + 1);
       hasMore = nextPageVideos.length > 0;
     } catch (error) {
       // If error fetching next page, assume no more pages
@@ -620,8 +620,8 @@ router.get('/test-videos/:roadmapId', async (req, res) => {
 
     console.log(`🧪 Testing video storage for roadmap: ${roadmapId}`);
     
-    const stored = await supabaseService.storeUserVideos(roadmapId, 'beginner', sampleVideos);
-    const retrieved = await supabaseService.getUserVideos(roadmapId, 'beginner');
+    const stored = await neonDbService.storeUserVideos(roadmapId, 'beginner', sampleVideos);
+    const retrieved = await neonDbService.getUserVideos(roadmapId, 'beginner');
     
     res.json({
       success: true,
@@ -668,7 +668,7 @@ router.delete('/roadmaps/:roadmapId', async (req, res) => {
     }
 
     // Delete the roadmap
-    await supabaseService.deleteUserRoadmap(roadmapId, userId);
+    await neonDbService.deleteUserRoadmap(roadmapId, userId);
     
     const successResponse = new SuccessResponse({
       message: 'Roadmap deleted successfully',
@@ -716,7 +716,7 @@ router.get('/settings/:userId', userDataLimiter, async (req, res) => {
       ip: req.ip,
     });
 
-    const settings = await supabaseService.getUserSettings(userId);
+    const settings = await neonDbService.getUserSettings(userId);
     
     // If no settings found, return default settings structure
     const defaultSettings = {
@@ -795,15 +795,15 @@ router.put('/settings/:userId', userDataLimiter, [
     });
 
     // Check if settings exist, if not create them first
-    const existingSettings = await supabaseService.getUserSettings(userId);
+    const existingSettings = await neonDbService.getUserSettings(userId);
     
     let updatedSettings;
     if (!existingSettings) {
       // Create new settings
-      updatedSettings = await supabaseService.createUserSettings(userId, settings);
+      updatedSettings = await neonDbService.createUserSettings(userId, settings);
     } else {
       // Update existing settings
-      updatedSettings = await supabaseService.updateUserSettings(userId, settings);
+      updatedSettings = await neonDbService.updateUserSettings(userId, settings);
     }
 
     const processingTime = Date.now() - startTime;
@@ -876,7 +876,7 @@ router.post('/settings/:userId', userDataLimiter, [
       ip: req.ip,
     });
 
-    const newSettings = await supabaseService.createUserSettings(userId, settings);
+    const newSettings = await neonDbService.createUserSettings(userId, settings);
 
     const processingTime = Date.now() - startTime;
 
@@ -925,7 +925,7 @@ router.delete('/settings/:userId', userDataLimiter, async (req, res) => {
       ip: req.ip,
     });
 
-    const deleted = await supabaseService.deleteUserSettings(userId);
+    const deleted = await neonDbService.deleteUserSettings(userId);
 
     if (!deleted) {
       const errorResponse = new ErrorResponse(
@@ -987,10 +987,10 @@ router.delete('/clear-data/:userId', userDataLimiter, async (req, res) => {
     // Delete all user data in correct order (child tables first)
     
     // 1. Delete roadmap progress
-    await supabaseService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
+    await neonDbService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
     
     // 2. Delete user videos (via roadmaps)
-    await supabaseService.pool.query(`
+    await neonDbService.pool.query(`
       DELETE FROM user_videos 
       WHERE user_roadmap_id IN (
         SELECT ur.id FROM user_roadmaps ur
@@ -1000,7 +1000,7 @@ router.delete('/clear-data/:userId', userDataLimiter, async (req, res) => {
     `, [userId]);
     
     // 3. Delete user roadmaps
-    await supabaseService.pool.query(`
+    await neonDbService.pool.query(`
       DELETE FROM user_roadmaps 
       WHERE user_topic_id IN (
         SELECT id FROM user_topics WHERE user_id = $1
@@ -1008,10 +1008,10 @@ router.delete('/clear-data/:userId', userDataLimiter, async (req, res) => {
     `, [userId]);
     
     // 4. Delete user topics
-    await supabaseService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
+    await neonDbService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
     
     // 5. Delete user settings
-    await supabaseService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
+    await neonDbService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
 
     const processingTime = Date.now() - startTime;
 
@@ -1062,10 +1062,10 @@ router.delete('/account/:userId', userDataLimiter, async (req, res) => {
     // Delete all user data first (same as clear data)
     
     // 1. Delete roadmap progress
-    await supabaseService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
+    await neonDbService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
     
     // 2. Delete user videos
-    await supabaseService.pool.query(`
+    await neonDbService.pool.query(`
       DELETE FROM user_videos 
       WHERE user_roadmap_id IN (
         SELECT ur.id FROM user_roadmaps ur
@@ -1075,7 +1075,7 @@ router.delete('/account/:userId', userDataLimiter, async (req, res) => {
     `, [userId]);
     
     // 3. Delete user roadmaps
-    await supabaseService.pool.query(`
+    await neonDbService.pool.query(`
       DELETE FROM user_roadmaps 
       WHERE user_topic_id IN (
         SELECT id FROM user_topics WHERE user_id = $1
@@ -1083,13 +1083,13 @@ router.delete('/account/:userId', userDataLimiter, async (req, res) => {
     `, [userId]);
     
     // 4. Delete user topics
-    await supabaseService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
+    await neonDbService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
     
     // 5. Delete user settings
-    await supabaseService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
+    await neonDbService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
     
     // 6. Finally delete the user account
-    const userResult = await supabaseService.pool.query('DELETE FROM users WHERE id = $1 RETURNING username', [userId]);
+    const userResult = await neonDbService.pool.query('DELETE FROM users WHERE id = $1 RETURNING username', [userId]);
     
     if (userResult.rows.length === 0) {
       const errorResponse = new ErrorResponse(

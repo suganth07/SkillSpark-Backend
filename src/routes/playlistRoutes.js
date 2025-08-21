@@ -8,7 +8,7 @@ import {
 } from "../models/responseModels.js";
 import geminiService from "../services/geminiService.js";
 import youtubeService from "../services/youtubeService.js";
-import supabaseService from "../services/supabaseService.js";
+import neonDbService from "../services/neonDbService.js";
 import { generateId } from "../utils/helpers.js";
 import {
   playlistLimiter,
@@ -64,7 +64,7 @@ router.post(
       
       if (userId) {
         try {
-          const userSettings = await supabaseService.getUserSettings(userId);
+          const userSettings = await neonDbService.getUserSettings(userId);
           
           // Use user settings as default preferences, but allow override from request
           finalUserPreferences = {
@@ -94,12 +94,12 @@ router.post(
 
       let playlists = [];
 
-      // Check if videos already exist in Supabase for this level
+      // Check if videos already exist in database for this level
       if (userRoadmapId && level) {
         try {
-          const existingVideos = await supabaseService.getUserVideos(userRoadmapId, level);
+          const existingVideos = await neonDbService.getUserVideos(userRoadmapId, level);
           if (existingVideos.length > 0) {
-            appLogger.info("Found existing videos in Supabase", {
+            appLogger.info("Found existing videos in database", {
               userRoadmapId,
               level,
               videoCount: existingVideos.length,
@@ -110,7 +110,7 @@ router.post(
             playlists = existingVideos[0].video_data.map(video => new PlaylistItem(video));
             
             const processingTime = Date.now() - startTime;
-            appLogger.info("Playlists retrieved from Supabase", {
+            appLogger.info("Playlists retrieved from database", {
               topic,
               pointTitle,
               level,
@@ -238,18 +238,18 @@ router.post(
         ip: req.ip,
       });
 
-      // Store videos in Supabase if userRoadmapId and level are provided
+      // Store videos in database if userRoadmapId and level are provided
       if (userRoadmapId && level && playlists.length > 0) {
         try {
-          await supabaseService.storeUserVideos(userRoadmapId, level, playlists);
-          appLogger.info("Videos stored in Supabase", {
+          await neonDbService.storeUserVideos(userRoadmapId, level, playlists);
+          appLogger.info("Videos stored in database", {
             userRoadmapId,
             level,
             videoCount: playlists.length,
             ip: req.ip,
           });
         } catch (error) {
-          appLogger.error("Failed to store videos in Supabase", error, {
+          appLogger.error("Failed to store videos in database", error, {
             userRoadmapId,
             level,
             videoCount: playlists.length,
@@ -330,7 +330,7 @@ router.post(
       
       if (userId) {
         try {
-          const userSettings = await supabaseService.getUserSettings(userId);
+          const userSettings = await neonDbService.getUserSettings(userId);
           
           // Use user settings as default preferences, but allow override from request
           finalUserPreferences = {
@@ -464,17 +464,17 @@ router.post(
         ip: req.ip,
       });
 
-      // Store new videos in Supabase with pagination (move old videos to next page)
+      // Store new videos in database with pagination (move old videos to next page)
       try {
-        await supabaseService.storeUserVideos(userRoadmapId, level, playlists, 1, true); // pageNumber = 1, isRegenerate = true
-        appLogger.info("Regenerated videos stored in Supabase", {
+        await neonDbService.storeUserVideos(userRoadmapId, level, playlists, 1, true); // pageNumber = 1, isRegenerate = true
+        appLogger.info("Regenerated videos stored in database", {
           userRoadmapId,
           level,
           videoCount: playlists.length,
           ip: req.ip,
         });
       } catch (error) {
-        appLogger.error("Failed to store regenerated videos in Supabase", error, {
+        appLogger.error("Failed to store regenerated videos in database", error, {
           userRoadmapId,
           level,
           videoCount: playlists.length,

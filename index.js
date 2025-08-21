@@ -5,7 +5,7 @@ import compression from "compression";
 import roadmapRoutes from "./src/routes/roadmapRoutes.js";
 import playlistRoutes from "./src/routes/playlistRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
-import supabaseService from "./src/services/supabaseService.js";
+import neonDbService from "./src/services/neonDbService.js";
 import {
   helmetConfig,
   generalLimiter,
@@ -23,7 +23,7 @@ import { validateEnvironmentVariables } from "./src/utils/helpers.js";
 dotenv.config();
 
 try {
-  validateEnvironmentVariables(["GEMINI_API_KEY", "YOUTUBE_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_KEY"]);
+  validateEnvironmentVariables(["GEMINI_API_KEY", "YOUTUBE_API_KEY", "DATABASE_URL"]);
 } catch (error) {
   console.error("Environment validation failed:", error.message);
   process.exit(1);
@@ -41,7 +41,7 @@ app.use(compression());
 const corsOptions = {
   origin: process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
-    : ["http://172.19.26.32:8081", "http://127.0.0.1:8081", "http://172.19.26.32:19000", "http://127.0.0.1:19000"],
+    : ["http://10.12.216.28:8081", "http://127.0.0.1:8081", "http://10.12.216.28:19000", "http://127.0.0.1:19000"],
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -85,6 +85,7 @@ app.get("/api/status", (req, res) => {
       services: {
         gemini: !!process.env.GEMINI_API_KEY,
         youtube: !!process.env.YOUTUBE_API_KEY,
+        database: !!process.env.DATABASE_URL,
       },
       timestamp: new Date().toISOString(),
     },
@@ -132,27 +133,27 @@ app.use("*", (req, res) => {
 
 process.on("SIGTERM", async () => {
   appLogger.info("SIGTERM received, shutting down gracefully");
-  await supabaseService.closePool();
+  await neonDbService.closePool();
   process.exit(0);
 });
 
 process.on("SIGINT", async () => {
   appLogger.info("SIGINT received, shutting down gracefully");
-  await supabaseService.closePool();
+  await neonDbService.closePool();
   process.exit(0);
 });
 
 // Handle uncaught exceptions
 process.on("uncaughtException", async (error) => {
   appLogger.error("Uncaught Exception:", error);
-  await supabaseService.closePool();
+  await neonDbService.closePool();
   process.exit(1);
 });
 
 // Handle unhandled promise rejections
 process.on("unhandledRejection", async (reason, promise) => {
   appLogger.error("Unhandled Rejection at:", promise, "reason:", reason);
-  await supabaseService.closePool();
+  await neonDbService.closePool();
   process.exit(1);
 });
 

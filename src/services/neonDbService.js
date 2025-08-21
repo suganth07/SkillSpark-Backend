@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-class SupabaseService {
+class DatabaseService {
   constructor() {
     if (!process.env.DATABASE_URL) {
       console.error('DATABASE_URL is required for PostgreSQL connection');
@@ -23,18 +23,12 @@ class SupabaseService {
           rejectUnauthorized: false,
           require: true
         },
-        // Improved connection pool settings for better performance and timeout handling
-        max: 10,                      // Maximum number of clients in pool
-        min: 2,                       // Minimum number of clients in pool
-        idleTimeoutMillis: 30000,     // Close idle clients after 30 seconds
-        connectionTimeoutMillis: 8000, // Timeout for acquiring connection (increased)
-        acquireTimeoutMillis: 60000,   // Timeout for acquiring connection from pool
-        createTimeoutMillis: 10000,    // Timeout for creating new connection
-        destroyTimeoutMillis: 5000,    // Timeout for destroying connection
-        reapIntervalMillis: 1000,      // How often to check for idle connections
-        createRetryIntervalMillis: 200, // Retry interval for failed connections
-        query_timeout: 15000,          // Query timeout (increased)
-        statement_timeout: 15000,      // Statement timeout (increased)
+        // Add connection pool settings for better performance
+        max: 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 2000,
+        query_timeout: 60000,
+        statement_timeout: 60000,
       });
 
       // Add error handling for pool events
@@ -87,43 +81,6 @@ class SupabaseService {
         console.error('❌ Error closing PostgreSQL pool:', error.message);
       }
       this.pool = null;
-    }
-  }
-
-  // Helper method for executing queries with proper timeout and connection management
-  async executeQuery(query, params = [], timeout = 10000) {
-    this._checkConnection();
-    let client;
-    
-    try {
-      // Get client from pool with timeout
-      client = await Promise.race([
-        this.pool.connect(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection acquisition timeout')), 5000)
-        )
-      ]);
-      
-      console.log('🔗 Client acquired from pool');
-      
-      // Execute query with timeout
-      const result = await Promise.race([
-        client.query(query, params),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Query execution timeout')), timeout)
-        )
-      ]);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Query execution error:', error.message);
-      throw error;
-    } finally {
-      if (client) {
-        client.release();
-        console.log('🔌 Client released back to pool');
-      }
     }
   }
 
@@ -268,9 +225,8 @@ class SupabaseService {
   }
 
   async getUserRoadmaps(userId) {
+    this._checkConnection();
     try {
-      console.log('🔍 Fetching roadmaps for user ID:', userId);
-      
       const query = `
         SELECT 
           ur.id,
@@ -285,7 +241,7 @@ class SupabaseService {
         ORDER BY ur.created_at DESC
       `;
       
-      const result = await this.executeQuery(query, [userId], 10000);
+      const result = await this.pool.query(query, [userId]);
       
       // Get progress data for all roadmaps
       const progressQuery = `
@@ -296,7 +252,7 @@ class SupabaseService {
         WHERE ut.user_id = $1
       `;
       
-      const progressResult = await this.executeQuery(progressQuery, [userId], 10000);
+      const progressResult = await this.pool.query(progressQuery, [userId]);
       const progressMap = new Map();
       
       // Group progress by roadmap_id
@@ -367,14 +323,14 @@ class SupabaseService {
     }
   }
 
-  // User Videos (Weak Entity - no id column)
+  // User Videos
   async createUserVideos(userRoadmapId, level, videoData) {
     this._checkConnection();
     try {
       const query = `
-        INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number)
-        VALUES ($1, $2, $3, 1, 1)
-        RETURNING user_roadmap_id, level, video_data, page_number, generation_number, created_at
+        INSERT INTO user_videos (user_roadmap_id, level, video_data)
+        VALUES ($1, $2, $3)
+        RETURNING id, user_roadmap_id, level, video_data, created_at
       `;
       
       const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
@@ -460,31 +416,24 @@ class SupabaseService {
   async storeUserVideos(userRoadmapId, level, videoData) {
     this._checkConnection();
     try {
-      // First check if videos already exist for this level (get the latest generation)
-      const existingVideos = await this.getUserVideos(userRoadmapId, level, 1);
+      // First check if videos already exist for this level
+      const existingVideos = await this.getUserVideos(userRoadmapId, level);
       
       if (existingVideos.length > 0) {
-        // Update the latest generation entry for page 1
-        const latestVideo = existingVideos[0]; // Already ordered by generation_number DESC
+        // Update existing entry
         const query = `
           UPDATE user_videos 
           SET video_data = $1, updated_at = CURRENT_TIMESTAMP
-          WHERE user_roadmap_id = $2 AND level = $3 AND page_number = $4 AND generation_number = $5
+          WHERE user_roadmap_id = $2 AND level = $3
           RETURNING *
         `;
-        const result = await this.pool.query(query, [
-          JSON.stringify(videoData), 
-          userRoadmapId, 
-          level, 
-          latestVideo.page_number, 
-          latestVideo.generation_number
-        ]);
+        const result = await this.pool.query(query, [JSON.stringify(videoData), userRoadmapId, level]);
         return result.rows[0];
       } else {
         // Insert new entry
         const query = `
-          INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number, created_at, updated_at)
-          VALUES ($1, $2, $3, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          INSERT INTO user_videos (user_roadmap_id, level, video_data, created_at, updated_at)
+          VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           RETURNING *
         `;
         const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
@@ -593,7 +542,7 @@ class SupabaseService {
       const query = `
         DELETE FROM user_videos 
         WHERE user_roadmap_id = $1 AND level = $2
-        RETURNING user_roadmap_id, level
+        RETURNING id
       `;
       
       const result = await this.pool.query(query, [userRoadmapId, level]);
@@ -676,12 +625,38 @@ class SupabaseService {
   }
 
   // User Settings Management
-  async createUserSettings(userId, settings = {}) {
+  async getUserSettings(userId) {
     this._checkConnection();
     try {
+      console.log('🔍 Fetching user settings for user:', userId);
+      
+      const query = `
+        SELECT * FROM user_settings 
+        WHERE user_id = $1
+      `;
+      
+      const result = await this.pool.query(query, [userId]);
+      
+      console.log('📊 User settings query result:', {
+        rowCount: result.rowCount,
+        hasRows: result.rows.length > 0
+      });
+      
+      return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+      console.error('❌ Failed to get user settings:', error.message);
+      throw new Error(`Failed to get user settings: ${error.message}`);
+    }
+  }
+
+  async createUserSettings(userId, settings) {
+    this._checkConnection();
+    try {
+      console.log('🔧 Creating user settings for user:', userId);
+      
       const {
-        full_name = null,
-        about_description = null,
+        full_name,
+        about_description,
         theme = 'light',
         default_roadmap_depth = 'detailed',
         default_video_length = 'medium'
@@ -701,84 +676,55 @@ class SupabaseService {
         default_roadmap_depth, default_video_length
       ]);
       
+      console.log('✅ Created user settings successfully');
       return result.rows[0];
     } catch (error) {
+      console.error('❌ Failed to create user settings:', error.message);
       throw new Error(`Failed to create user settings: ${error.message}`);
     }
   }
 
-  async getUserSettings(userId) {
+  async updateUserSettings(userId, updates) {
+    this._checkConnection();
     try {
-      console.log('🔍 Fetching user settings for user ID:', userId);
+      console.log('🔧 Updating user settings for user:', userId);
       
-      const query = `
-        SELECT * FROM user_settings WHERE user_id = $1
-      `;
-      
-      const result = await this.executeQuery(query, [userId], 8000);
-      
-      // If no settings exist, return null (don't auto-create)
-      if (result.rows.length === 0) {
-        console.log('⚠️  No user settings found for user:', userId);
-        return null;
-      }
-      
-      console.log('✅ User settings found successfully');
-      return result.rows[0];
-    } catch (error) {
-      console.error('❌ Error in getUserSettings:', error.message);
-      throw new Error(`Failed to get user settings: ${error.message}`);
-    }
-  }
+      const setClause = [];
+      const values = [];
+      let paramIndex = 1;
 
-  async updateUserSettings(userId, settings) {
-    try {
-      const updateFields = [];
-      const values = [userId];
-      let paramCount = 1;
-
-      // Build dynamic update query based on provided fields
-      if (settings.full_name !== undefined) {
-        updateFields.push(`full_name = $${++paramCount}`);
-        values.push(settings.full_name);
-      }
-      
-      if (settings.about_description !== undefined) {
-        updateFields.push(`about_description = $${++paramCount}`);
-        values.push(settings.about_description);
-      }
-      
-      if (settings.theme !== undefined) {
-        updateFields.push(`theme = $${++paramCount}`);
-        values.push(settings.theme);
-      }
-      
-      if (settings.default_roadmap_depth !== undefined) {
-        updateFields.push(`default_roadmap_depth = $${++paramCount}`);
-        values.push(settings.default_roadmap_depth);
-      }
-      
-      if (settings.default_video_length !== undefined) {
-        updateFields.push(`default_video_length = $${++paramCount}`);
-        values.push(settings.default_video_length);
+      // Build dynamic update query
+      for (const [key, value] of Object.entries(updates)) {
+        if (value !== undefined && key !== 'user_id' && key !== 'id') {
+          setClause.push(`${key} = $${paramIndex}`);
+          values.push(value);
+          paramIndex++;
+        }
       }
 
-      if (updateFields.length === 0) {
-        // No fields to update, return current settings
-        return await this.getUserSettings(userId);
+      if (setClause.length === 0) {
+        throw new Error('No valid fields to update');
       }
 
+      values.push(userId); // userId for WHERE clause
+      
       const query = `
         UPDATE user_settings 
-        SET ${updateFields.join(', ')}, updated_at = NOW()
-        WHERE user_id = $1
+        SET ${setClause.join(', ')}, updated_at = NOW()
+        WHERE user_id = $${paramIndex}
         RETURNING *
       `;
       
-      const result = await this.executeQuery(query, values, 8000);
+      const result = await this.pool.query(query, values);
+      
+      if (result.rows.length === 0) {
+        throw new Error('No user settings found to update');
+      }
+      
+      console.log('✅ Updated user settings successfully');
       return result.rows[0];
     } catch (error) {
-      console.error('❌ Error in updateUserSettings:', error.message);
+      console.error('❌ Failed to update user settings:', error.message);
       throw new Error(`Failed to update user settings: ${error.message}`);
     }
   }
@@ -786,17 +732,61 @@ class SupabaseService {
   async deleteUserSettings(userId) {
     this._checkConnection();
     try {
-      const query = `
-        DELETE FROM user_settings WHERE user_id = $1
-        RETURNING id
-      `;
+      console.log('🗑️ Deleting user settings for user:', userId);
       
+      const query = `DELETE FROM user_settings WHERE user_id = $1 RETURNING *`;
       const result = await this.pool.query(query, [userId]);
+      
+      console.log('✅ Deleted user settings successfully');
       return result.rows.length > 0;
     } catch (error) {
+      console.error('❌ Failed to delete user settings:', error.message);
       throw new Error(`Failed to delete user settings: ${error.message}`);
+    }
+  }
+
+  async upsertUserSettings(userId, settings) {
+    this._checkConnection();
+    try {
+      console.log('🔧 Upserting user settings for user:', userId);
+      
+      const {
+        full_name,
+        about_description,
+        theme = 'light',
+        default_roadmap_depth = 'detailed',
+        default_video_length = 'medium'
+      } = settings;
+
+      const query = `
+        INSERT INTO user_settings (
+          user_id, full_name, about_description, theme, 
+          default_roadmap_depth, default_video_length
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (user_id) 
+        DO UPDATE SET 
+          full_name = EXCLUDED.full_name,
+          about_description = EXCLUDED.about_description,
+          theme = EXCLUDED.theme,
+          default_roadmap_depth = EXCLUDED.default_roadmap_depth,
+          default_video_length = EXCLUDED.default_video_length,
+          updated_at = NOW()
+        RETURNING *
+      `;
+      
+      const result = await this.pool.query(query, [
+        userId, full_name, about_description, theme, 
+        default_roadmap_depth, default_video_length
+      ]);
+      
+      console.log('✅ Upserted user settings successfully');
+      return result.rows[0];
+    } catch (error) {
+      console.error('❌ Failed to upsert user settings:', error.message);
+      throw new Error(`Failed to upsert user settings: ${error.message}`);
     }
   }
 }
 
-export default new SupabaseService();
+export default new DatabaseService();

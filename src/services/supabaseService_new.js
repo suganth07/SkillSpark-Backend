@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-class SupabaseService {
+class DatabaseService {
   constructor() {
     if (!process.env.DATABASE_URL) {
       console.error('DATABASE_URL is required for PostgreSQL connection');
@@ -625,4 +625,4 @@ class SupabaseService {
   }
 }
 
-export default new SupabaseService();
+export default new DatabaseService();

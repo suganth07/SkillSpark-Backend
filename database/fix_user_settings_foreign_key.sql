@@ -1,5 +1,5 @@
 -- Fix the foreign key constraint in existing user_settings table
--- Run this in Supabase SQL Editor to fix the foreign key reference
+-- Run this in Neon SQL Console to fix the foreign key reference
 
 -- Step 1: Drop the existing foreign key constraint
 ALTER TABLE public.user_settings 

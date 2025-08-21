@@ -9,7 +9,7 @@ import {
   validateRoadmapRequest,
 } from "../models/responseModels.js";
 import geminiService from "../services/geminiService.js";
-import supabaseService from "../services/supabaseService.js";
+import neonDbService from "../services/neonDbService.js";
 import {
   generateId,
   getCurrentTimestamp,
@@ -46,7 +46,7 @@ router.post(
       
       if (userId) {
         try {
-          const userSettings = await supabaseService.getUserSettings(userId);
+          const userSettings = await neonDbService.getUserSettings(userId);
           
           // Use user settings as default preferences, but allow override from request
           finalUserPreferences = {

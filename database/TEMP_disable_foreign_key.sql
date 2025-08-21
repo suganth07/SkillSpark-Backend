@@ -1,5 +1,5 @@
 -- Temporarily disable foreign key constraint for testing
--- Run this in Supabase SQL Editor
+-- Run this in Neon SQL Console
 
 -- Drop the foreign key constraint temporarily
 ALTER TABLE public.user_settings 

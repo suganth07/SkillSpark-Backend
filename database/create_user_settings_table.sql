@@ -1,5 +1,5 @@
--- Create user_settings table in Supabase
--- Run this command in Supabase SQL Editor
+-- Create user_settings table in Neon Database
+-- Run this command in Neon SQL Console
 
 CREATE TABLE IF NOT EXISTS user_settings (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

@@ -1,5 +1,5 @@
 -- Test script to verify user_settings table setup
--- Copy and run this in Supabase SQL Editor to test the setup
+-- Copy and run this in Neon SQL Console to test the setup
 
 -- Test 1: Insert a sample user settings record
 INSERT INTO user_settings (
