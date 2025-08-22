@@ -133,32 +133,28 @@ app.use("*", (req, res) => {
 
 process.on("SIGTERM", async () => {
   appLogger.info("SIGTERM received, shutting down gracefully");
-  await neonDbService.closePool();
   process.exit(0);
 });
 
 process.on("SIGINT", async () => {
   appLogger.info("SIGINT received, shutting down gracefully");
-  await neonDbService.closePool();
   process.exit(0);
 });
 
 // Handle uncaught exceptions
 process.on("uncaughtException", async (error) => {
   appLogger.error("Uncaught Exception:", error);
-  await neonDbService.closePool();
   process.exit(1);
 });
 
 // Handle unhandled promise rejections
-process.on("unhandledRejection", async (reason, promise) => {
-  appLogger.error("Unhandled Rejection at:", promise, "reason:", reason);
-  await neonDbService.closePool();
-  process.exit(1);
-});
+// process.on("unhandledRejection", async (reason, promise) => {
+//   appLogger.error("Unhandled Rejection at:", promise, "reason:", reason);
+//   process.exit(1);
+// });
 
-app.listen(PORT, "172.19.26.32", () => {
-  console.log(`🚀 Server started successfully on http://172.19.26.32:${PORT}`);
+app.listen(PORT, "10.12.82.168", () => {
+  console.log(`🚀 Server started successfully on http://10.12.82.168:${PORT}`);
   console.log(`📊 Environment: ${NODE_ENV}`);
   console.log(`📝 Logging to files: ${process.cwd()}/logs/`);
 

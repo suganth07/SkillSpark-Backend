@@ -1,5 +1,4 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+import { neon } from '@neondatabase/serverless';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -7,85 +6,53 @@ dotenv.config();
 class DatabaseService {
   constructor() {
     if (!process.env.DATABASE_URL) {
-      console.error('DATABASE_URL is required for PostgreSQL connection');
-      this.pool = null;
+      console.error('DATABASE_URL is required for Neon database connection');
+      this.sql = null;
       return;
     }
 
     try {
-      console.log('🔗 Connecting to database...');
+      console.log('🔗 Connecting to Neon database...');
       console.log('🔗 Database URL (masked):', process.env.DATABASE_URL.replace(/:[^:@]*@/, ':***@'));
       
-      // Initialize PostgreSQL connection pool for raw SQL only
-      this.pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-          rejectUnauthorized: false,
-          require: true
-        },
-        // Add connection pool settings for better performance
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-        query_timeout: 60000,
-        statement_timeout: 60000,
-      });
-
-      // Add error handling for pool events
-      this.pool.on('error', (err) => {
-        console.warn('⚠️ PostgreSQL pool error:', err.message);
-      });
-
-      this.pool.on('connect', (client) => {
-        console.log('🔗 New PostgreSQL client connected');
-      });
-
-      this.pool.on('remove', (client) => {
-        console.log('🔌 PostgreSQL client removed from pool');
-      });
+      // Initialize Neon serverless database connection
+      this.sql = neon(process.env.DATABASE_URL);
       
-      console.log('✅ PostgreSQL pool initialized successfully');
+      console.log('✅ Neon database connection initialized successfully');
       
       // Test the connection asynchronously
       this.testConnection().catch(error => {
-        console.warn('⚠️ PostgreSQL connection test failed:', error.message);
+        console.warn('⚠️ Neon database connection test failed:', error.message);
       });
       
     } catch (error) {
       console.error('Failed to initialize database connection:', error.message);
-      this.pool = null;
+      this.sql = null;
     }
   }
 
   async testConnection() {
-    if (!this.pool) return;
+    if (!this.sql) return;
     
     try {
-      const client = await this.pool.connect();
-      const result = await client.query('SELECT NOW()');
-      console.log('✅ Database connection test successful:', result.rows[0]);
-      client.release();
+      const result = await this.sql`SELECT NOW()`;
+      console.log('✅ Database connection test successful:', result[0]);
     } catch (error) {
       console.error('❌ Database connection test failed:', error.message);
       throw error;
     }
   }
 
-  // Gracefully close the pool
-  async closePool() {
-    if (this.pool) {
-      try {
-        await this.pool.end();
-        console.log('🔌 PostgreSQL pool closed gracefully');
-      } catch (error) {
-        console.error('❌ Error closing PostgreSQL pool:', error.message);
-      }
-      this.pool = null;
+  // Gracefully close the connection (Neon serverless doesn't need explicit closing)
+  async closeConnection() {
+    if (this.sql) {
+      console.log('🔌 Neon database connection closed');
+      this.sql = null;
     }
   }
 
   _checkConnection() {
-    if (!this.pool) {
+    if (!this.sql) {
       throw new Error('No database connection available. Please check your configuration.');
     }
   }
@@ -94,14 +61,13 @@ class DatabaseService {
   async createUser(username, password) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         INSERT INTO users (username, password)
-        VALUES ($1, $2)
+        VALUES (${username}, ${password})
         RETURNING id, username, created_at
       `;
       
-      const result = await this.pool.query(query, [username, password]);
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       throw new Error(`Failed to create user: ${error.message}`);
     }
@@ -110,26 +76,21 @@ class DatabaseService {
   async getUserByCredentials(username, password) {
     this._checkConnection();
     try {
-      console.log('🔍 Attempting to get user by credentials via PostgreSQL:', username);
+      console.log('🔍 Attempting to get user by credentials via Neon:', username);
       
-      const query = `
+      const result = await this.sql`
         SELECT id, username 
         FROM users 
-        WHERE username = $1 AND password = $2
+        WHERE username = ${username} AND password = ${password}
       `;
       
-      console.log('📋 Executing query:', query);
-      console.log('📋 Query parameters:', [username, '***']);
-      
-      const result = await this.pool.query(query, [username, password]);
-      
       console.log('📊 Query result:', {
-        rowCount: result.rowCount,
-        hasRows: result.rows.length > 0,
-        firstRow: result.rows.length > 0 ? { id: result.rows[0].id, username: result.rows[0].username } : null
+        rowCount: result.length,
+        hasRows: result.length > 0,
+        firstRow: result.length > 0 ? { id: result[0].id, username: result[0].username } : null
       });
       
-      return result.rows.length > 0 ? result.rows[0] : null;
+      return result.length > 0 ? result[0] : null;
     } catch (error) {
       console.error('❌ Database query error:', {
         message: error.message,
@@ -144,14 +105,13 @@ class DatabaseService {
   async checkUserExists(username) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         SELECT COUNT(*) as count 
         FROM users 
-        WHERE username = $1
+        WHERE username = ${username}
       `;
       
-      const result = await this.pool.query(query, [username]);
-      return parseInt(result.rows[0].count) > 0;
+      return parseInt(result[0].count) > 0;
     } catch (error) {
       throw new Error(`Failed to check user existence: ${error.message}`);
     }
@@ -161,14 +121,13 @@ class DatabaseService {
   async createUserTopic(userId, topic) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         INSERT INTO user_topics (user_id, topic)
-        VALUES ($1, $2)
+        VALUES (${userId}, ${topic})
         RETURNING id, user_id, topic, created_at
       `;
       
-      const result = await this.pool.query(query, [userId, topic]);
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       throw new Error(`Failed to create user topic: ${error.message}`);
     }
@@ -177,15 +136,14 @@ class DatabaseService {
   async getUserTopics(userId) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         SELECT * 
         FROM user_topics 
-        WHERE user_id = $1 
+        WHERE user_id = ${userId} 
         ORDER BY created_at DESC
       `;
       
-      const result = await this.pool.query(query, [userId]);
-      return result.rows || [];
+      return result || [];
     } catch (error) {
       throw new Error(`Failed to get user topics: ${error.message}`);
     }
@@ -194,14 +152,13 @@ class DatabaseService {
   async getUserTopicByName(userId, topicName) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         SELECT * 
         FROM user_topics 
-        WHERE user_id = $1 AND topic = $2
+        WHERE user_id = ${userId} AND topic = ${topicName}
       `;
       
-      const result = await this.pool.query(query, [userId, topicName]);
-      return result.rows.length > 0 ? result.rows[0] : null;
+      return result.length > 0 ? result[0] : null;
     } catch (error) {
       throw new Error(`Failed to get user topic by name: ${error.message}`);
     }
@@ -211,14 +168,13 @@ class DatabaseService {
   async createUserRoadmap(userTopicId, roadmapData) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         INSERT INTO user_roadmaps (user_topic_id, roadmap_data)
-        VALUES ($1, $2)
+        VALUES (${userTopicId}, ${JSON.stringify(roadmapData)})
         RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
       `;
       
-      const result = await this.pool.query(query, [userTopicId, JSON.stringify(roadmapData)]);
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       throw new Error(`Failed to create user roadmap: ${error.message}`);
     }
@@ -227,7 +183,7 @@ class DatabaseService {
   async getUserRoadmaps(userId) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         SELECT 
           ur.id,
           ur.roadmap_data,
@@ -237,26 +193,23 @@ class DatabaseService {
           ut.topic
         FROM user_roadmaps ur
         INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
-        WHERE ut.user_id = $1
+        WHERE ut.user_id = ${userId}
         ORDER BY ur.created_at DESC
       `;
       
-      const result = await this.pool.query(query, [userId]);
-      
       // Get progress data for all roadmaps
-      const progressQuery = `
+      const progressResult = await this.sql`
         SELECT rp.roadmap_id, rp.point_id, rp.is_completed, rp.completed_at
         FROM roadmap_progress rp
         INNER JOIN user_roadmaps ur ON rp.roadmap_id = ur.id
         INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
-        WHERE ut.user_id = $1
+        WHERE ut.user_id = ${userId}
       `;
       
-      const progressResult = await this.pool.query(progressQuery, [userId]);
       const progressMap = new Map();
       
       // Group progress by roadmap_id
-      progressResult.rows.forEach(row => {
+      progressResult.forEach(row => {
         if (!progressMap.has(row.roadmap_id)) {
           progressMap.set(row.roadmap_id, {});
         }
@@ -267,7 +220,7 @@ class DatabaseService {
       });
       
       // Transform the data to match frontend expectations and merge progress
-      const transformedData = result.rows.map(item => {
+      const transformedData = result.map(item => {
         const roadmapData = typeof item.roadmap_data === 'string' ? JSON.parse(item.roadmap_data) : item.roadmap_data;
         const progressData = progressMap.get(item.id) || {};
         
@@ -309,15 +262,14 @@ class DatabaseService {
   async updateUserRoadmap(roadmapId, roadmapData) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         UPDATE user_roadmaps 
-        SET roadmap_data = $2, updated_at = NOW()
-        WHERE id = $1
+        SET roadmap_data = ${JSON.stringify(roadmapData)}, updated_at = NOW()
+        WHERE id = ${roadmapId}
         RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
       `;
       
-      const result = await this.pool.query(query, [roadmapId, JSON.stringify(roadmapData)]);
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       throw new Error(`Failed to update user roadmap: ${error.message}`);
     }
@@ -327,14 +279,13 @@ class DatabaseService {
   async createUserVideos(userRoadmapId, level, videoData) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         INSERT INTO user_videos (user_roadmap_id, level, video_data)
-        VALUES ($1, $2, $3)
+        VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoData)})
         RETURNING id, user_roadmap_id, level, video_data, created_at
       `;
       
-      const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       throw new Error(`Failed to create user videos: ${error.message}`);
     }
@@ -345,33 +296,30 @@ class DatabaseService {
     this._checkConnection();
     try {
       // Check if progress record exists
-      const checkQuery = `
+      const checkResult = await this.sql`
         SELECT * FROM roadmap_progress 
-        WHERE user_id = $1 AND roadmap_id = $2 AND point_id = $3
+        WHERE user_id = ${userId} AND roadmap_id = ${roadmapId} AND point_id = ${pointId}
       `;
-      const checkResult = await this.pool.query(checkQuery, [userId, roadmapId, pointId]);
 
-      if (checkResult.rows.length > 0) {
+      if (checkResult.length > 0) {
         // Update existing record
-        const updateQuery = `
+        const completedAt = isCompleted ? new Date().toISOString() : null;
+        const result = await this.sql`
           UPDATE roadmap_progress 
-          SET is_completed = $4, completed_at = $5, updated_at = NOW()
-          WHERE user_id = $1 AND roadmap_id = $2 AND point_id = $3
+          SET is_completed = ${isCompleted}, completed_at = ${completedAt}, updated_at = NOW()
+          WHERE user_id = ${userId} AND roadmap_id = ${roadmapId} AND point_id = ${pointId}
           RETURNING *
         `;
-        const completedAt = isCompleted ? new Date().toISOString() : null;
-        const result = await this.pool.query(updateQuery, [userId, roadmapId, pointId, isCompleted, completedAt]);
-        return result.rows[0];
+        return result[0];
       } else {
         // Create new record
-        const insertQuery = `
+        const completedAt = isCompleted ? new Date().toISOString() : null;
+        const result = await this.sql`
           INSERT INTO roadmap_progress (user_id, roadmap_id, point_id, is_completed, completed_at)
-          VALUES ($1, $2, $3, $4, $5)
+          VALUES (${userId}, ${roadmapId}, ${pointId}, ${isCompleted}, ${completedAt})
           RETURNING *
         `;
-        const completedAt = isCompleted ? new Date().toISOString() : null;
-        const result = await this.pool.query(insertQuery, [userId, roadmapId, pointId, isCompleted, completedAt]);
-        return result.rows[0];
+        return result[0];
       }
     } catch (error) {
       throw new Error(`Failed to mark roadmap point complete: ${error.message}`);
@@ -381,14 +329,13 @@ class DatabaseService {
   async getRoadmapProgress(userId, roadmapId) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         SELECT * FROM roadmap_progress 
-        WHERE user_id = $1 AND roadmap_id = $2
+        WHERE user_id = ${userId} AND roadmap_id = ${roadmapId}
         ORDER BY created_at ASC
       `;
       
-      const result = await this.pool.query(query, [userId, roadmapId]);
-      return result.rows || [];
+      return result || [];
     } catch (error) {
       throw new Error(`Failed to get roadmap progress: ${error.message}`);
     }
@@ -397,17 +344,16 @@ class DatabaseService {
   async getAllUserRoadmapProgress(userId) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         SELECT rp.*, ur.roadmap_data 
         FROM roadmap_progress rp
         INNER JOIN user_roadmaps ur ON rp.roadmap_id = ur.id
         INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
-        WHERE ut.user_id = $1
+        WHERE ut.user_id = ${userId}
         ORDER BY rp.created_at ASC
       `;
       
-      const result = await this.pool.query(query, [userId]);
-      return result.rows || [];
+      return result || [];
     } catch (error) {
       throw new Error(`Failed to get all user roadmap progress: ${error.message}`);
     }
@@ -421,23 +367,21 @@ class DatabaseService {
       
       if (existingVideos.length > 0) {
         // Update existing entry
-        const query = `
+        const result = await this.sql`
           UPDATE user_videos 
-          SET video_data = $1, updated_at = CURRENT_TIMESTAMP
-          WHERE user_roadmap_id = $2 AND level = $3
+          SET video_data = ${JSON.stringify(videoData)}, updated_at = CURRENT_TIMESTAMP
+          WHERE user_roadmap_id = ${userRoadmapId} AND level = ${level}
           RETURNING *
         `;
-        const result = await this.pool.query(query, [JSON.stringify(videoData), userRoadmapId, level]);
-        return result.rows[0];
+        return result[0];
       } else {
         // Insert new entry
-        const query = `
+        const result = await this.sql`
           INSERT INTO user_videos (user_roadmap_id, level, video_data, created_at, updated_at)
-          VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoData)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           RETURNING *
         `;
-        const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData)]);
-        return result.rows[0];
+        return result[0];
       }
     } catch (error) {
       throw new Error(`Failed to store user videos: ${error.message}`);
@@ -447,29 +391,28 @@ class DatabaseService {
   async getUserVideos(userRoadmapId, level = null, page = 1) {
     this._checkConnection();
     try {
-      let query = `
+      let baseQuery = `
         SELECT * 
         FROM user_videos 
-        WHERE user_roadmap_id = $1
+        WHERE user_roadmap_id = ${userRoadmapId}
       `;
-      let params = [userRoadmapId];
-
-      if (level) {
-        query += ` AND level = $2`;
-        params.push(level);
+      
+      let additionalConditions = [];
+      
+      if (level !== null) {
+        additionalConditions.push(`AND level = '${level}'`);
       }
 
-      if (page) {
-        query += ` AND page_number = $${params.length + 1}`;
-        params.push(page);
+      if (page !== null) {
+        additionalConditions.push(`AND page_number = ${page}`);
       }
 
-      query += ` ORDER BY generation_number DESC, created_at DESC`;
-
-      const result = await this.pool.query(query, params);
+      const finalQuery = baseQuery + ' ' + additionalConditions.join(' ') + ' ORDER BY generation_number DESC, created_at DESC';
+      
+      const result = await this.sql(finalQuery);
       
       // Parse video_data if it's a string
-      const transformedData = result.rows.map(item => ({
+      const transformedData = result.map(item => ({
         ...item,
         video_data: typeof item.video_data === 'string' ? JSON.parse(item.video_data) : item.video_data
       }));
@@ -491,14 +434,13 @@ class DatabaseService {
       // Get the next generation number for this page
       const generationNumber = await this.getNextGenerationNumber(userRoadmapId, level, pageNumber);
 
-      const query = `
+      const result = await this.sql`
         INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoData)}, ${pageNumber}, ${generationNumber})
         RETURNING user_roadmap_id, level, video_data, page_number, generation_number, created_at
       `;
       
-      const result = await this.pool.query(query, [userRoadmapId, level, JSON.stringify(videoData), pageNumber, generationNumber]);
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       throw new Error(`Failed to store user videos: ${error.message}`);
     }
@@ -507,14 +449,13 @@ class DatabaseService {
   async getNextGenerationNumber(userRoadmapId, level, pageNumber) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         SELECT COALESCE(MAX(generation_number), 0) + 1 as next_generation
         FROM user_videos 
-        WHERE user_roadmap_id = $1 AND level = $2 AND page_number = $3
+        WHERE user_roadmap_id = ${userRoadmapId} AND level = ${level} AND page_number = ${pageNumber}
       `;
       
-      const result = await this.pool.query(query, [userRoadmapId, level, pageNumber]);
-      return result.rows[0].next_generation;
+      return result[0].next_generation;
     } catch (error) {
       throw new Error(`Failed to get next generation number: ${error.message}`);
     }
@@ -523,14 +464,13 @@ class DatabaseService {
   async moveVideosToNextPage(userRoadmapId, level) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         UPDATE user_videos 
         SET page_number = page_number + 1
-        WHERE user_roadmap_id = $1 AND level = $2
+        WHERE user_roadmap_id = ${userRoadmapId} AND level = ${level}
       `;
       
-      const result = await this.pool.query(query, [userRoadmapId, level]);
-      return result.rowCount;
+      return result.length;
     } catch (error) {
       throw new Error(`Failed to move videos to next page: ${error.message}`);
     }
@@ -539,14 +479,13 @@ class DatabaseService {
   async deleteUserVideos(userRoadmapId, level) {
     this._checkConnection();
     try {
-      const query = `
+      const result = await this.sql`
         DELETE FROM user_videos 
-        WHERE user_roadmap_id = $1 AND level = $2
+        WHERE user_roadmap_id = ${userRoadmapId} AND level = ${level}
         RETURNING id
       `;
       
-      const result = await this.pool.query(query, [userRoadmapId, level]);
-      return result.rows.length > 0;
+      return result.length > 0;
     } catch (error) {
       throw new Error(`Failed to delete user videos: ${error.message}`);
     }
@@ -555,29 +494,27 @@ class DatabaseService {
   async deleteUserRoadmap(roadmapId, userId) {
     this._checkConnection();
     try {
-      console.log(`🗑️ Deleting roadmap ${roadmapId} for user ${userId} using PostgreSQL pool`);
+      console.log(`🗑️ Deleting roadmap ${roadmapId} for user ${userId} using Neon database`);
       
       // First, get the user_topic_id for the roadmap to verify ownership
-      const checkOwnershipQuery = `
+      const ownershipResult = await this.sql`
         SELECT ur.user_topic_id 
         FROM user_roadmaps ur
         JOIN user_topics ut ON ur.user_topic_id = ut.id
-        WHERE ur.id = $1 AND ut.user_id = $2
+        WHERE ur.id = ${roadmapId} AND ut.user_id = ${userId}
       `;
-      const ownershipResult = await this.pool.query(checkOwnershipQuery, [roadmapId, userId]);
       
-      if (ownershipResult.rows.length === 0) {
+      if (ownershipResult.length === 0) {
         throw new Error('Roadmap not found or not owned by user');
       }
       
-      const userTopicId = ownershipResult.rows[0].user_topic_id;
+      const userTopicId = ownershipResult[0].user_topic_id;
       
       // Delete in correct order: child tables first, then parent tables
       
       // 1. Delete roadmap progress
       try {
-        const deleteProgressQuery = `DELETE FROM roadmap_progress WHERE roadmap_id = $1`;
-        await this.pool.query(deleteProgressQuery, [roadmapId]);
+        await this.sql`DELETE FROM roadmap_progress WHERE roadmap_id = ${roadmapId}`;
         console.log('✅ Deleted roadmap progress');
       } catch (error) {
         if (error.message.includes('does not exist')) {
@@ -589,8 +526,7 @@ class DatabaseService {
 
       // 2. Delete user videos
       try {
-        const deleteVideosQuery = `DELETE FROM user_videos WHERE user_roadmap_id = $1`;
-        await this.pool.query(deleteVideosQuery, [roadmapId]);
+        await this.sql`DELETE FROM user_videos WHERE user_roadmap_id = ${roadmapId}`;
         console.log('✅ Deleted user videos');
       } catch (error) {
         if (error.message.includes('does not exist')) {
@@ -601,17 +537,14 @@ class DatabaseService {
       }
 
       // 3. Delete user roadmap
-      const deleteRoadmapQuery = `DELETE FROM user_roadmaps WHERE id = $1`;
-      await this.pool.query(deleteRoadmapQuery, [roadmapId]);
+      await this.sql`DELETE FROM user_roadmaps WHERE id = ${roadmapId}`;
       console.log('✅ Deleted user roadmap');
 
       // 4. Delete user topic (if no other roadmaps reference it)
-      const checkOtherRoadmapsQuery = `SELECT COUNT(*) as count FROM user_roadmaps WHERE user_topic_id = $1`;
-      const otherRoadmapsResult = await this.pool.query(checkOtherRoadmapsQuery, [userTopicId]);
+      const otherRoadmapsResult = await this.sql`SELECT COUNT(*) as count FROM user_roadmaps WHERE user_topic_id = ${userTopicId}`;
       
-      if (otherRoadmapsResult.rows[0].count == 0) {
-        const deleteTopicQuery = `DELETE FROM user_topics WHERE id = $1`;
-        await this.pool.query(deleteTopicQuery, [userTopicId]);
+      if (otherRoadmapsResult[0].count == 0) {
+        await this.sql`DELETE FROM user_topics WHERE id = ${userTopicId}`;
         console.log('✅ Deleted user topic (no other roadmaps reference it)');
       } else {
         console.log('ℹ️ User topic kept (other roadmaps still reference it)');
@@ -630,19 +563,17 @@ class DatabaseService {
     try {
       console.log('🔍 Fetching user settings for user:', userId);
       
-      const query = `
+      const result = await this.sql`
         SELECT * FROM user_settings 
-        WHERE user_id = $1
+        WHERE user_id = ${userId}
       `;
       
-      const result = await this.pool.query(query, [userId]);
-      
       console.log('📊 User settings query result:', {
-        rowCount: result.rowCount,
-        hasRows: result.rows.length > 0
+        rowCount: result.length,
+        hasRows: result.length > 0
       });
       
-      return result.rows.length > 0 ? result.rows[0] : null;
+      return result.length > 0 ? result[0] : null;
     } catch (error) {
       console.error('❌ Failed to get user settings:', error.message);
       throw new Error(`Failed to get user settings: ${error.message}`);
@@ -662,22 +593,17 @@ class DatabaseService {
         default_video_length = 'medium'
       } = settings;
 
-      const query = `
+      const result = await this.sql`
         INSERT INTO user_settings (
           user_id, full_name, about_description, theme, 
           default_roadmap_depth, default_video_length
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES (${userId}, ${full_name}, ${about_description}, ${theme}, ${default_roadmap_depth}, ${default_video_length})
         RETURNING *
       `;
       
-      const result = await this.pool.query(query, [
-        userId, full_name, about_description, theme, 
-        default_roadmap_depth, default_video_length
-      ]);
-      
       console.log('✅ Created user settings successfully');
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       console.error('❌ Failed to create user settings:', error.message);
       throw new Error(`Failed to create user settings: ${error.message}`);
@@ -689,40 +615,37 @@ class DatabaseService {
     try {
       console.log('🔧 Updating user settings for user:', userId);
       
-      const setClause = [];
-      const values = [];
-      let paramIndex = 1;
-
-      // Build dynamic update query
+      // Extract fields to update
+      const updateFields = {};
       for (const [key, value] of Object.entries(updates)) {
         if (value !== undefined && key !== 'user_id' && key !== 'id') {
-          setClause.push(`${key} = $${paramIndex}`);
-          values.push(value);
-          paramIndex++;
+          updateFields[key] = value;
         }
       }
 
-      if (setClause.length === 0) {
+      if (Object.keys(updateFields).length === 0) {
         throw new Error('No valid fields to update');
       }
 
-      values.push(userId); // userId for WHERE clause
+      // Build the SET clause dynamically
+      const setClauses = Object.keys(updateFields).map(key => `${key} = '${updateFields[key]}'`);
+      const setClause = setClauses.join(', ');
       
       const query = `
         UPDATE user_settings 
-        SET ${setClause.join(', ')}, updated_at = NOW()
-        WHERE user_id = $${paramIndex}
+        SET ${setClause}, updated_at = NOW()
+        WHERE user_id = ${userId}
         RETURNING *
       `;
       
-      const result = await this.pool.query(query, values);
+      const result = await this.sql(query);
       
-      if (result.rows.length === 0) {
+      if (result.length === 0) {
         throw new Error('No user settings found to update');
       }
       
       console.log('✅ Updated user settings successfully');
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       console.error('❌ Failed to update user settings:', error.message);
       throw new Error(`Failed to update user settings: ${error.message}`);
@@ -734,11 +657,10 @@ class DatabaseService {
     try {
       console.log('🗑️ Deleting user settings for user:', userId);
       
-      const query = `DELETE FROM user_settings WHERE user_id = $1 RETURNING *`;
-      const result = await this.pool.query(query, [userId]);
+      const result = await this.sql`DELETE FROM user_settings WHERE user_id = ${userId} RETURNING *`;
       
       console.log('✅ Deleted user settings successfully');
-      return result.rows.length > 0;
+      return result.length > 0;
     } catch (error) {
       console.error('❌ Failed to delete user settings:', error.message);
       throw new Error(`Failed to delete user settings: ${error.message}`);
@@ -758,12 +680,12 @@ class DatabaseService {
         default_video_length = 'medium'
       } = settings;
 
-      const query = `
+      const result = await this.sql`
         INSERT INTO user_settings (
           user_id, full_name, about_description, theme, 
           default_roadmap_depth, default_video_length
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES (${userId}, ${full_name}, ${about_description}, ${theme}, ${default_roadmap_depth}, ${default_video_length})
         ON CONFLICT (user_id) 
         DO UPDATE SET 
           full_name = EXCLUDED.full_name,
@@ -775,13 +697,8 @@ class DatabaseService {
         RETURNING *
       `;
       
-      const result = await this.pool.query(query, [
-        userId, full_name, about_description, theme, 
-        default_roadmap_depth, default_video_length
-      ]);
-      
       console.log('✅ Upserted user settings successfully');
-      return result.rows[0];
+      return result[0];
     } catch (error) {
       console.error('❌ Failed to upsert user settings:', error.message);
       throw new Error(`Failed to upsert user settings: ${error.message}`);
