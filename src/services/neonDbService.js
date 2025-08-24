@@ -117,6 +117,34 @@ class DatabaseService {
     }
   }
 
+  async ensureUserExists(userId, username = null) {
+    this._checkConnection();
+    try {
+      // First check if user exists by ID
+      const existingUser = await this.sql`
+        SELECT id, username 
+        FROM users 
+        WHERE id = ${userId}
+      `;
+      
+      if (existingUser.length > 0) {
+        return existingUser[0];
+      }
+      
+      // User doesn't exist, create them
+      console.log(`👤 Creating user record for UUID: ${userId}`);
+      const result = await this.sql`
+        INSERT INTO users (id, username, password)
+        VALUES (${userId}, ${username || 'user_' + userId.slice(0, 8)}, 'oauth')
+        RETURNING id, username, created_at
+      `;
+      
+      return result[0];
+    } catch (error) {
+      throw new Error(`Failed to ensure user exists: ${error.message}`);
+    }
+  }
+
   // User Topics
   async createUserTopic(userId, topic) {
     this._checkConnection();
@@ -391,25 +419,45 @@ class DatabaseService {
   async getUserVideos(userRoadmapId, level = null, page = 1) {
     this._checkConnection();
     try {
-      let baseQuery = `
-        SELECT * 
-        FROM user_videos 
-        WHERE user_roadmap_id = ${userRoadmapId}
-      `;
+      console.log(`🔍 Fetching user videos for roadmap: ${userRoadmapId}, level: ${level}, page: ${page}`);
       
-      let additionalConditions = [];
+      let result;
       
-      if (level !== null) {
-        additionalConditions.push(`AND level = '${level}'`);
+      if (level !== null && page !== null) {
+        result = await this.sql`
+          SELECT * 
+          FROM user_videos 
+          WHERE user_roadmap_id = ${userRoadmapId}
+            AND level = ${level}
+            AND page_number = ${page}
+          ORDER BY generation_number DESC, created_at DESC
+        `;
+      } else if (level !== null) {
+        result = await this.sql`
+          SELECT * 
+          FROM user_videos 
+          WHERE user_roadmap_id = ${userRoadmapId}
+            AND level = ${level}
+          ORDER BY generation_number DESC, created_at DESC
+        `;
+      } else if (page !== null) {
+        result = await this.sql`
+          SELECT * 
+          FROM user_videos 
+          WHERE user_roadmap_id = ${userRoadmapId}
+            AND page_number = ${page}
+          ORDER BY generation_number DESC, created_at DESC
+        `;
+      } else {
+        result = await this.sql`
+          SELECT * 
+          FROM user_videos 
+          WHERE user_roadmap_id = ${userRoadmapId}
+          ORDER BY generation_number DESC, created_at DESC
+        `;
       }
-
-      if (page !== null) {
-        additionalConditions.push(`AND page_number = ${page}`);
-      }
-
-      const finalQuery = baseQuery + ' ' + additionalConditions.join(' ') + ' ORDER BY generation_number DESC, created_at DESC';
       
-      const result = await this.sql(finalQuery);
+      console.log(`📊 Found ${result.length} video records`);
       
       // Parse video_data if it's a string
       const transformedData = result.map(item => ({
@@ -464,14 +512,42 @@ class DatabaseService {
   async moveVideosToNextPage(userRoadmapId, level) {
     this._checkConnection();
     try {
-      const result = await this.sql`
-        UPDATE user_videos 
-        SET page_number = page_number + 1
+      console.log(`🔄 Moving videos to next page for roadmap: ${userRoadmapId}, level: ${level}`);
+      
+      // First, get all existing videos for this roadmap and level
+      const existingVideos = await this.sql`
+        SELECT user_roadmap_id, level, page_number, generation_number FROM user_videos 
         WHERE user_roadmap_id = ${userRoadmapId} AND level = ${level}
+        ORDER BY page_number DESC, generation_number DESC
       `;
       
-      return result.length;
+      if (existingVideos.length === 0) {
+        console.log('📋 No existing videos to move');
+        return 0;
+      }
+      
+      // Update page numbers in reverse order to avoid conflicts
+      // Start with the highest page number and work backwards
+      const sortedVideos = existingVideos.sort((a, b) => b.page_number - a.page_number);
+      let updatedCount = 0;
+      
+      for (const video of sortedVideos) {
+        const newPageNumber = video.page_number + 1;
+        await this.sql`
+          UPDATE user_videos 
+          SET page_number = ${newPageNumber}
+          WHERE user_roadmap_id = ${video.user_roadmap_id} 
+            AND level = ${video.level}
+            AND page_number = ${video.page_number}
+            AND generation_number = ${video.generation_number}
+        `;
+        updatedCount++;
+      }
+      
+      console.log(`✅ Successfully moved ${updatedCount} videos to next page`);
+      return updatedCount;
     } catch (error) {
+      console.error('❌ Failed to move videos to next page:', error);
       throw new Error(`Failed to move videos to next page: ${error.message}`);
     }
   }
@@ -627,18 +703,47 @@ class DatabaseService {
         throw new Error('No valid fields to update');
       }
 
-      // Build the SET clause dynamically
-      const setClauses = Object.keys(updateFields).map(key => `${key} = '${updateFields[key]}'`);
-      const setClause = setClauses.join(', ');
+      // Handle different field updates with tagged templates
+      let result;
       
-      const query = `
-        UPDATE user_settings 
-        SET ${setClause}, updated_at = NOW()
-        WHERE user_id = ${userId}
-        RETURNING *
-      `;
-      
-      const result = await this.sql(query);
+      if (updateFields.full_name !== undefined) {
+        result = await this.sql`
+          UPDATE user_settings 
+          SET full_name = ${updateFields.full_name}, updated_at = NOW()
+          WHERE user_id = ${userId}
+          RETURNING *
+        `;
+      } else if (updateFields.about_description !== undefined) {
+        result = await this.sql`
+          UPDATE user_settings 
+          SET about_description = ${updateFields.about_description}, updated_at = NOW()
+          WHERE user_id = ${userId}
+          RETURNING *
+        `;
+      } else if (updateFields.theme !== undefined) {
+        result = await this.sql`
+          UPDATE user_settings 
+          SET theme = ${updateFields.theme}, updated_at = NOW()
+          WHERE user_id = ${userId}
+          RETURNING *
+        `;
+      } else if (updateFields.default_roadmap_depth !== undefined) {
+        result = await this.sql`
+          UPDATE user_settings 
+          SET default_roadmap_depth = ${updateFields.default_roadmap_depth}, updated_at = NOW()
+          WHERE user_id = ${userId}
+          RETURNING *
+        `;
+      } else if (updateFields.default_video_length !== undefined) {
+        result = await this.sql`
+          UPDATE user_settings 
+          SET default_video_length = ${updateFields.default_video_length}, updated_at = NOW()
+          WHERE user_id = ${userId}
+          RETURNING *
+        `;
+      } else {
+        throw new Error(`Unsupported field update: ${Object.keys(updateFields).join(', ')}`);
+      }
       
       if (result.length === 0) {
         throw new Error('No user settings found to update');

@@ -252,6 +252,9 @@ router.post('/roadmaps', async (req, res) => {
       ip: req.ip,
     });
 
+    // Ensure user exists in database before creating topics
+    await neonDbService.ensureUserExists(userId);
+
     // First, get or create the user topic
     let userTopic = await neonDbService.getUserTopicByName(userId, topic);
     if (!userTopic) {
@@ -987,31 +990,31 @@ router.delete('/clear-data/:userId', userDataLimiter, async (req, res) => {
     // Delete all user data in correct order (child tables first)
     
     // 1. Delete roadmap progress
-    await neonDbService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
+    await neonDbService.sql`DELETE FROM roadmap_progress WHERE user_id = ${userId}`;
     
     // 2. Delete user videos (via roadmaps)
-    await neonDbService.pool.query(`
+    await neonDbService.sql`
       DELETE FROM user_videos 
       WHERE user_roadmap_id IN (
         SELECT ur.id FROM user_roadmaps ur
         JOIN user_topics ut ON ur.user_topic_id = ut.id
-        WHERE ut.user_id = $1
+        WHERE ut.user_id = ${userId}
       )
-    `, [userId]);
+    `;
     
     // 3. Delete user roadmaps
-    await neonDbService.pool.query(`
+    await neonDbService.sql`
       DELETE FROM user_roadmaps 
       WHERE user_topic_id IN (
-        SELECT id FROM user_topics WHERE user_id = $1
+        SELECT id FROM user_topics WHERE user_id = ${userId}
       )
-    `, [userId]);
+    `;
     
     // 4. Delete user topics
-    await neonDbService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
+    await neonDbService.sql`DELETE FROM user_topics WHERE user_id = ${userId}`;
     
     // 5. Delete user settings
-    await neonDbService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
+    await neonDbService.sql`DELETE FROM user_settings WHERE user_id = ${userId}`;
 
     const processingTime = Date.now() - startTime;
 
@@ -1062,36 +1065,36 @@ router.delete('/account/:userId', userDataLimiter, async (req, res) => {
     // Delete all user data first (same as clear data)
     
     // 1. Delete roadmap progress
-    await neonDbService.pool.query('DELETE FROM roadmap_progress WHERE user_id = $1', [userId]);
+    await neonDbService.sql`DELETE FROM roadmap_progress WHERE user_id = ${userId}`;
     
     // 2. Delete user videos
-    await neonDbService.pool.query(`
+    await neonDbService.sql`
       DELETE FROM user_videos 
       WHERE user_roadmap_id IN (
         SELECT ur.id FROM user_roadmaps ur
         JOIN user_topics ut ON ur.user_topic_id = ut.id
-        WHERE ut.user_id = $1
+        WHERE ut.user_id = ${userId}
       )
-    `, [userId]);
+    `;
     
     // 3. Delete user roadmaps
-    await neonDbService.pool.query(`
+    await neonDbService.sql`
       DELETE FROM user_roadmaps 
       WHERE user_topic_id IN (
-        SELECT id FROM user_topics WHERE user_id = $1
+        SELECT id FROM user_topics WHERE user_id = ${userId}
       )
-    `, [userId]);
+    `;
     
     // 4. Delete user topics
-    await neonDbService.pool.query('DELETE FROM user_topics WHERE user_id = $1', [userId]);
+    await neonDbService.sql`DELETE FROM user_topics WHERE user_id = ${userId}`;
     
     // 5. Delete user settings
-    await neonDbService.pool.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
+    await neonDbService.sql`DELETE FROM user_settings WHERE user_id = ${userId}`;
     
     // 6. Finally delete the user account
-    const userResult = await neonDbService.pool.query('DELETE FROM users WHERE id = $1 RETURNING username', [userId]);
+    const userResult = await neonDbService.sql`DELETE FROM users WHERE id = ${userId} RETURNING username`;
     
-    if (userResult.rows.length === 0) {
+    if (userResult.length === 0) {
       const errorResponse = new ErrorResponse(
         new ErrorDetails(
           'USER_NOT_FOUND',

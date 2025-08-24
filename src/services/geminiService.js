@@ -82,13 +82,40 @@ class GeminiService {
 
       const responseText = response.text;
 
-      // Extract JSON from the response
-      const jsonMatch = responseText.match(/\{.*\}/s);
-      if (!jsonMatch) {
+      // Clean up the response text and extract JSON
+      console.log("🔍 Raw Gemini response:", responseText);
+      
+      // Try to find JSON between triple backticks or directly
+      let jsonText = responseText;
+      
+      // Remove code block markers if present
+      const codeBlockMatch = responseText.match(/```(?:json)?\s*(\{.*\})\s*```/s);
+      if (codeBlockMatch) {
+        jsonText = codeBlockMatch[1];
+      } else {
+        // Try to extract JSON from the response
+        const jsonMatch = responseText.match(/\{.*\}/s);
+        if (jsonMatch) {
+          jsonText = jsonMatch[0];
+        }
+      }
+      
+      console.log("🔍 Extracted JSON text:", jsonText);
+      
+      if (!jsonText || jsonText.trim() === '') {
         throw new Error("No valid JSON found in response");
       }
+      
+      // Clean up common JSON issues
+      jsonText = jsonText
+        .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+        .replace(/[\r\n\t]/g, ' ') // Replace line breaks and tabs
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
+      
+      console.log("🔍 Cleaned JSON text:", jsonText);
 
-      const roadmapData = JSON.parse(jsonMatch[0]);
+      const roadmapData = JSON.parse(jsonText);
 
       if (!roadmapData.extractedTopic || !roadmapData.roadmap) {
         throw new Error("Invalid roadmap structure received");
