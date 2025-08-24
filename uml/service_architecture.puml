@@ -95,31 +95,6 @@ package "Services" <<Folder>> {
     + getUserSettings(userId : Integer) : Promise<UserSettings>
     + updateUserSettings(userId : Integer, updates : JSON) : Promise<UserSettings>
   }
-
-  class SupabaseService {
-    - pool : Pool
-    __
-    + constructor()
-    + testConnection() : Promise<void>
-    + closePool() : Promise<void>
-    - _checkConnection() : void
-    ' Core CRUD operations
-    + createUser(username : String, password : String) : Promise<User>
-    + getUserByCredentials(username : String, password : String) : Promise<User>
-    + checkUserExists(username : String) : Promise<Boolean>
-    + createUserTopic(userId : Integer, topic : String) : Promise<UserTopic>
-    + getUserTopics(userId : Integer) : Promise<UserTopic[]>
-    + getUserTopicByName(userId : Integer, topicName : String) : Promise<UserTopic>
-    + createUserRoadmap(userTopicId : Integer, roadmapData : JSON) : Promise<UserRoadmap>
-    + getUserRoadmaps(userId : Integer) : Promise<UserRoadmap[]>
-    + updateUserRoadmap(roadmapId : Integer, roadmapData : JSON) : Promise<UserRoadmap>
-    ' Video and progress operations
-    + createUserVideos(userRoadmapId : Integer, level : String, videoData : JSON) : Promise<UserVideo>
-    + storeUserVideos(userRoadmapId : Integer, level : String, videoData : JSON, pageNumber : Integer, isRegenerate : Boolean) : Promise<UserVideo>
-    + getUserVideos(userRoadmapId : Integer, level : String, page : Integer) : Promise<UserVideo[]>
-    + markRoadmapPointComplete(userId : Integer, roadmapId : Integer, pointId : String, isCompleted : Boolean) : Promise<RoadmapProgress>
-    + getRoadmapProgress(userId : Integer, roadmapId : Integer) : Promise<RoadmapProgress[]>
-  }
 }
 
 package "External Services" <<Folder>> {
@@ -180,7 +155,6 @@ package "Models & Utilities" <<Folder>> {
 
 ' UML Relationships (Landscape Optimized)
 DatabaseService <|.. NeonDbService : implements
-DatabaseService <|.. SupabaseService : implements
 
 ' Controller to Service Dependencies
 UserRoutes --> DatabaseService : uses

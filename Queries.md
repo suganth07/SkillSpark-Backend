@@ -20,7 +20,7 @@ The application uses the following main tables:
 ### 1.1 Create User
 
 **Operation**: Register a new user  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 INSERT INTO users (username, password)
@@ -31,7 +31,7 @@ RETURNING id, username, created_at
 ### 1.2 Get User by Credentials
 
 **Operation**: Authenticate user login  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT id, username
@@ -42,7 +42,7 @@ WHERE username = $1 AND password = $2
 ### 1.3 Check User Exists
 
 **Operation**: Verify if username already exists  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT COUNT(*) as count
@@ -66,7 +66,7 @@ DELETE FROM users WHERE id = $1 RETURNING username
 ### 2.1 Create User Topic
 
 **Operation**: Create a new learning topic for user  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 INSERT INTO user_topics (user_id, topic)
@@ -77,7 +77,7 @@ RETURNING id, user_id, topic, created_at
 ### 2.2 Get User Topics
 
 **Operation**: Retrieve all topics for a user  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT *
@@ -89,7 +89,7 @@ ORDER BY created_at DESC
 ### 2.3 Get User Topic by Name
 
 **Operation**: Find specific topic by name for user  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT *
@@ -113,7 +113,7 @@ DELETE FROM user_topics WHERE user_id = $1
 ### 3.1 Create User Roadmap
 
 **Operation**: Create a learning roadmap for a topic  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 INSERT INTO user_roadmaps (user_topic_id, roadmap_data)
@@ -124,7 +124,7 @@ RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
 ### 3.2 Get User Roadmaps
 
 **Operation**: Retrieve all roadmaps for a user with progress  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 **Main Query:**
 
@@ -155,7 +155,7 @@ WHERE ut.user_id = $1
 ### 3.3 Update User Roadmap
 
 **Operation**: Update roadmap data  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 UPDATE user_roadmaps
@@ -179,7 +179,7 @@ WHERE user_topic_id IN (
 ### 3.5 Delete Specific User Roadmap
 
 **Operation**: Remove a specific roadmap and related data  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 **Ownership Check:**
 
@@ -215,7 +215,7 @@ DELETE FROM user_topics WHERE id = $1
 ### 4.1 Create User Videos
 
 **Operation**: Store video data for a roadmap level  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 INSERT INTO user_videos (user_roadmap_id, level, video_data)
@@ -226,7 +226,7 @@ RETURNING id, user_roadmap_id, level, video_data, created_at
 ### 4.2 Store User Videos (with pagination)
 
 **Operation**: Store videos with page and generation tracking  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number)
@@ -237,7 +237,7 @@ RETURNING id, user_roadmap_id, level, video_data, page_number, generation_number
 ### 4.3 Update Existing User Videos
 
 **Operation**: Update video data for existing entry  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 UPDATE user_videos
@@ -249,7 +249,7 @@ RETURNING *
 ### 4.4 Get User Videos
 
 **Operation**: Retrieve videos for roadmap level with pagination  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 **Neon DB (Dynamic Query):**
 
@@ -276,7 +276,7 @@ ORDER BY generation_number DESC, created_at DESC
 ### 4.5 Get Next Generation Number
 
 **Operation**: Get the next generation number for video pagination  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT COALESCE(MAX(generation_number), 0) + 1 as next_generation
@@ -287,7 +287,7 @@ WHERE user_roadmap_id = $1 AND level = $2 AND page_number = $3
 ### 4.6 Move Videos to Next Page
 
 **Operation**: Increment page numbers for existing videos  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 UPDATE user_videos
@@ -298,7 +298,7 @@ WHERE user_roadmap_id = $1 AND level = $2
 ### 4.7 Delete User Videos
 
 **Operation**: Remove videos for specific roadmap level  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 DELETE FROM user_videos
@@ -309,7 +309,7 @@ RETURNING id
 ### 4.8 Delete All User Videos for Roadmap
 
 **Operation**: Remove all videos for a roadmap  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 DELETE FROM user_videos WHERE user_roadmap_id = $1
@@ -336,7 +336,7 @@ WHERE user_roadmap_id IN (
 ### 5.1 Mark Roadmap Point Complete
 
 **Operation**: Mark a roadmap point as completed/incomplete  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 **Check Existing Progress:**
 
@@ -365,7 +365,7 @@ RETURNING *
 ### 5.2 Get Roadmap Progress
 
 **Operation**: Get progress for specific roadmap  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT * FROM roadmap_progress
@@ -376,7 +376,7 @@ ORDER BY created_at ASC
 ### 5.3 Get All User Roadmap Progress
 
 **Operation**: Get progress for all user roadmaps  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT rp.*, ur.roadmap_data
@@ -390,7 +390,7 @@ ORDER BY rp.created_at ASC
 ### 5.4 Delete Roadmap Progress
 
 **Operation**: Remove progress for specific roadmap  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 DELETE FROM roadmap_progress WHERE roadmap_id = $1
@@ -487,7 +487,7 @@ DELETE FROM user_settings WHERE user_id = $1
 ### 7.1 Database Connection Test
 
 **Operation**: Test database connectivity  
-**Services**: `neonDbService.js`, `supabaseService_new.js`
+**Services**: `neonDbService.js`
 
 ```sql
 SELECT NOW()
@@ -567,7 +567,6 @@ DELETE FROM users WHERE id = $1 RETURNING username;
 ### Database Services
 
 - **neonDbService.js**: Uses Neon serverless PostgreSQL with template literals
-- **supabaseService_new.js**: Uses PostgreSQL connection pool with parameterized queries
 
 ### Security Features
 
