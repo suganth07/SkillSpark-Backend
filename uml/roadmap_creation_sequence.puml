@@ -1,0 +1,108 @@
+@startuml SkillSpark_Roadmap_Creation_Sequence
+
+' UML Sequence Diagram for Roadmap Creation Flow
+' Following UML 2.5 Standards
+
+participant "User" as U
+participant ":Frontend" as FE
+participant ":RoadmapRoutes" as RR
+participant ":GeminiService" as GS
+participant ":DatabaseService" as DS
+participant ":UserRoutes" as UR
+participant ":Database" as DB
+
+U -> FE : requestRoadmap("React")
+activate FE
+
+FE -> RR : POST /api/roadmaps/generate\n{topic: "React", userId: 123, userPreferences: {...}}
+activate RR
+
+opt User preferences provided
+  RR -> DS : getUserSettings(userId)
+  activate DS
+  DS -> DB : SELECT * FROM user_settings WHERE user_id = $1
+  activate DB
+  DB --> DS : userSettings : UserSettings
+  deactivate DB
+  DS --> RR : userPreferences : JSON
+  deactivate DS
+end
+
+RR -> GS : generateRoadmap(topic, preferences)
+activate GS
+note right of GS : Uses Gemini AI to generate\nstructured learning roadmap
+
+GS -> GS : _parseRoadmapResponse()
+GS --> RR : roadmapData : JSON\n{extractedTopic: "React", roadmap: {...}}
+deactivate GS
+
+RR -> RR : transformToPointResponseObjects()
+RR -> RR : createRoadmapDataResponse()
+
+RR --> FE : roadmapResponse : JSON
+deactivate RR
+
+opt User wants to save roadmap
+  U -> FE : saveRoadmap()
+  FE -> UR : POST /api/users/roadmaps\n{userId: 123, topic: "React", roadmapData: {...}}
+  activate UR
+
+  UR -> DS : getUserTopicByName(userId, topic)
+  activate DS
+  DS -> DB : SELECT * FROM user_topics WHERE user_id = $1 AND topic = $2
+  activate DB
+  DB --> DS : existingTopic : UserTopic | null
+  deactivate DB
+  DS --> UR : existingTopic : UserTopic | null
+  deactivate DS
+
+  opt Topic doesn't exist
+    UR -> DS : createUserTopic(userId, topic)
+    activate DS
+    DS -> DB : INSERT INTO user_topics (user_id, topic) VALUES ($1, $2)
+    activate DB
+    DB --> DS : newTopic : UserTopic
+    deactivate DB
+    DS --> UR : createdTopic : UserTopic
+    deactivate DS
+  end
+
+  UR -> DS : getUserRoadmaps(userId)
+  activate DS
+  DS -> DB : Complex JOIN query for roadmaps and progress
+  activate DB
+  DB --> DS : existingRoadmaps : UserRoadmap[]
+  deactivate DB
+  DS --> UR : roadmapList : UserRoadmap[]
+  deactivate DS
+
+  alt Roadmap exists for topic
+    UR -> DS : updateUserRoadmap(roadmapId, roadmapData)
+    activate DS
+    DS -> DB : UPDATE user_roadmaps SET roadmap_data = $2 WHERE id = $1
+    activate DB
+    DB --> DS : updatedRoadmap : UserRoadmap
+    deactivate DB
+    DS --> UR : updatedRoadmap : UserRoadmap
+    deactivate DS
+  else New roadmap
+    UR -> DS : createUserRoadmap(userTopicId, roadmapData)
+    activate DS
+    DS -> DB : INSERT INTO user_roadmaps (user_topic_id, roadmap_data) VALUES ($1, $2)
+    activate DB
+    DB --> DS : newRoadmap : UserRoadmap
+    deactivate DB
+    DS --> UR : createdRoadmap : UserRoadmap
+    deactivate DS
+  end
+
+  UR --> FE : successResponse : JSON\n{roadmap: UserRoadmap}
+  deactivate UR
+end
+
+FE --> U : displayRoadmap(roadmapData)
+deactivate FE
+
+@enduml
+
+@enduml

@@ -1,0 +1,163 @@
+@startuml SkillSpark_Database_Class_Diagram
+
+' UML Class Diagram for Database Entities
+' Following UML 2.5 Standards
+
+class User {
+  - id : Integer {PK}
+  - username : String {unique}
+  - password : String
+  - created_at : DateTime
+  - updated_at : DateTime
+  __
+  + getId() : Integer
+  + getUsername() : String
+  + setPassword(password : String) : void
+  + getCreatedAt() : DateTime
+  + getUpdatedAt() : DateTime
+}
+
+class UserTopic {
+  - id : Integer {PK}
+  - user_id : Integer {FK}
+  - topic : String
+  - created_at : DateTime
+  - updated_at : DateTime
+  __
+  + getId() : Integer
+  + getUserId() : Integer
+  + getTopic() : String
+  + setTopic(topic : String) : void
+  + getCreatedAt() : DateTime
+  + getUpdatedAt() : DateTime
+}
+
+class UserRoadmap {
+  - id : Integer {PK}
+  - user_topic_id : Integer {FK}
+  - roadmap_data : JSON
+  - created_at : DateTime
+  - updated_at : DateTime
+  __
+  + getId() : Integer
+  + getUserTopicId() : Integer
+  + getRoadmapData() : JSON
+  + setRoadmapData(data : JSON) : void
+  + getCreatedAt() : DateTime
+  + getUpdatedAt() : DateTime
+}
+
+class UserVideo {
+  - id : Integer {PK}
+  - user_roadmap_id : Integer {FK}
+  - level : LevelEnum
+  - video_data : JSON
+  - page_number : Integer = 1
+  - generation_number : Integer = 1
+  - created_at : DateTime
+  - updated_at : DateTime
+  __
+  + getId() : Integer
+  + getUserRoadmapId() : Integer
+  + getLevel() : LevelEnum
+  + getVideoData() : JSON
+  + setVideoData(data : JSON) : void
+  + getPageNumber() : Integer
+  + setPageNumber(page : Integer) : void
+  + getGenerationNumber() : Integer
+  + setGenerationNumber(generation : Integer) : void
+  + getCreatedAt() : DateTime
+  + getUpdatedAt() : DateTime
+}
+
+class RoadmapProgress {
+  - id : Integer {PK}
+  - user_id : Integer {FK}
+  - roadmap_id : Integer {FK}
+  - point_id : String
+  - is_completed : Boolean = false
+  - completed_at : DateTime {nullable}
+  - created_at : DateTime
+  - updated_at : DateTime
+  __
+  + getId() : Integer
+  + getUserId() : Integer
+  + getRoadmapId() : Integer
+  + getPointId() : String
+  + isCompleted() : Boolean
+  + setCompleted(completed : Boolean) : void
+  + getCompletedAt() : DateTime
+  + setCompletedAt(dateTime : DateTime) : void
+  + getCreatedAt() : DateTime
+  + getUpdatedAt() : DateTime
+}
+
+class UserSettings {
+  - id : Integer {PK}
+  - user_id : Integer {FK, unique}
+  - full_name : String {nullable}
+  - about_description : String {nullable}
+  - theme : ThemeEnum = "light"
+  - default_roadmap_depth : DepthEnum = "detailed"
+  - default_video_length : VideoLengthEnum = "medium"
+  - created_at : DateTime
+  - updated_at : DateTime
+  __
+  + getId() : Integer
+  + getUserId() : Integer
+  + getFullName() : String
+  + setFullName(name : String) : void
+  + getAboutDescription() : String
+  + setAboutDescription(description : String) : void
+  + getTheme() : ThemeEnum
+  + setTheme(theme : ThemeEnum) : void
+  + getDefaultRoadmapDepth() : DepthEnum
+  + setDefaultRoadmapDepth(depth : DepthEnum) : void
+  + getDefaultVideoLength() : VideoLengthEnum
+  + setDefaultVideoLength(length : VideoLengthEnum) : void
+  + getCreatedAt() : DateTime
+  + getUpdatedAt() : DateTime
+}
+
+enum LevelEnum {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum ThemeEnum {
+  LIGHT
+  DARK
+}
+
+enum DepthEnum {
+  BASIC
+  DETAILED
+  COMPREHENSIVE
+}
+
+enum VideoLengthEnum {
+  SHORT
+  MEDIUM
+  LONG
+}
+
+' Associations (UML Standard Notation)
+User ||--o{ UserTopic : "owns"
+User ||--o{ RoadmapProgress : "tracks"
+User ||--|| UserSettings : "has"
+
+UserTopic ||--o{ UserRoadmap : "contains"
+
+UserRoadmap ||--o{ UserVideo : "includes"
+UserRoadmap ||--o{ RoadmapProgress : "progress tracked by"
+
+' Constraint Notes (UML Standard)
+note top of User : Entity representing system users\nwith authentication capabilities
+note top of UserTopic : Represents learning subjects\nchosen by users
+note top of UserRoadmap : Generated learning paths\nstored as structured data
+note top of UserVideo : Video content collections\nwith pagination support
+note top of RoadmapProgress : Progress tracking entity\nfor learning milestones
+note top of UserSettings : User preference configuration\nfor personalized experience
+
+@enduml

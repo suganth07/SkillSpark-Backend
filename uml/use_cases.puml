@@ -1,0 +1,104 @@
+@startuml SkillSpark_Use_Cases
+
+' UML Use Case Diagram for SkillSpark Backend System
+' Following UML 2.5 Standards
+
+left to right direction
+
+actor User as U
+actor Administrator as A
+
+rectangle "SkillSpark Backend System" {
+  
+  package "Authentication" {
+    usecase "Register Account" as UC1
+    usecase "Login" as UC2
+    usecase "Check Username Availability" as UC3
+  }
+  
+  package "Learning Management" {
+    usecase "Generate Roadmap" as UC4
+    usecase "Save Roadmap" as UC5
+    usecase "View My Roadmaps" as UC6
+    usecase "Update Roadmap" as UC7
+    usecase "Delete Roadmap" as UC8
+    usecase "Track Progress" as UC9
+    usecase "Mark Point Complete" as UC10
+  }
+  
+  package "Video Content" {
+    usecase "Generate Video Playlist" as UC11
+    usecase "Regenerate Videos" as UC12
+    usecase "View Videos by Level" as UC13
+    usecase "Paginate Video Results" as UC14
+  }
+  
+  package "User Preferences" {
+    usecase "Manage Settings" as UC15
+    usecase "Set Learning Preferences" as UC16
+    usecase "Configure Roadmap Depth" as UC17
+    usecase "Set Video Length Preference" as UC18
+  }
+  
+  package "Data Management" {
+    usecase "Clear All Data" as UC19
+    usecase "Delete Account" as UC20
+    usecase "Export Progress" as UC21
+  }
+  
+  package "Topic Management" {
+    usecase "Create Learning Topic" as UC22
+    usecase "View Topics" as UC23
+    usecase "Search Topics" as UC24
+  }
+  
+}
+
+' User Associations (UML Standard)
+U --> UC1
+U --> UC2
+U --> UC3
+U --> UC4
+U --> UC5
+U --> UC6
+U --> UC7
+U --> UC8
+U --> UC9
+U --> UC10
+U --> UC11
+U --> UC12
+U --> UC13
+U --> UC14
+U --> UC15
+U --> UC16
+U --> UC17
+U --> UC18
+U --> UC19
+U --> UC20
+U --> UC21
+U --> UC22
+U --> UC23
+U --> UC24
+
+' Administrator Associations
+A --> UC19
+A --> UC20
+
+' Include Dependencies (UML Standard)
+UC4 ..> UC22 : <<include>>
+UC5 ..> UC22 : <<include>>
+UC11 ..> UC6 : <<include>>
+UC12 ..> UC13 : <<include>>
+
+' Extend Dependencies (UML Standard)
+UC16 <.. UC4 : <<extend>>
+UC17 <.. UC11 : <<extend>>
+UC18 <.. UC11 : <<extend>>
+
+' Constraint Notes (UML Standard)
+note top of UC4 : Uses AI (Gemini) to generate\npersonalized learning roadmaps\nbased on user preferences
+note top of UC11 : Searches YouTube for relevant\nvideos using AI-generated titles
+note top of UC9 : Tracks completion status of\nindividual roadmap points\nwith timestamps
+note top of UC15 : Allows users to customize\nlearning experience and\ncontent preferences
+
+@enduml

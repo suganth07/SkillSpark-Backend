@@ -1,0 +1,210 @@
+@startuml SkillSpark_Service_Architecture
+
+' UML Class Diagram for Service Architecture
+' Following UML 2.5 Standards
+
+package "Controllers" <<Folder>> {
+  class UserRoutes <<Controller>> {
+    - databaseService : DatabaseService
+    - logger : Logger
+    - security : Security
+    __
+    + createUser(request : Request, response : Response) : void
+    + getUserRoadmaps(request : Request, response : Response) : void
+    + updateUserRoadmap(request : Request, response : Response) : void
+    + deleteUserRoadmap(request : Request, response : Response) : void
+    + markRoadmapProgress(request : Request, response : Response) : void
+    + getUserVideos(request : Request, response : Response) : void
+    + getUserSettings(request : Request, response : Response) : void
+    + updateUserSettings(request : Request, response : Response) : void
+    + clearAllUserData(request : Request, response : Response) : void
+  }
+
+  class RoadmapRoutes <<Controller>> {
+    - geminiService : GeminiService
+    - databaseService : DatabaseService
+    - logger : Logger
+    __
+    + generateRoadmap(request : Request, response : Response) : void
+  }
+
+  class PlaylistRoutes <<Controller>> {
+    - geminiService : GeminiService
+    - youtubeService : YoutubeService
+    - databaseService : DatabaseService
+    - logger : Logger
+    __
+    + generatePlaylist(request : Request, response : Response) : void
+    + regeneratePlaylist(request : Request, response : Response) : void
+  }
+}
+
+package "Services" <<Folder>> {
+  interface DatabaseService {
+    + createUser(username : String, password : String) : User
+    + getUserByCredentials(username : String, password : String) : User
+    + checkUserExists(username : String) : Boolean
+    + createUserTopic(userId : Integer, topic : String) : UserTopic
+    + getUserTopics(userId : Integer) : UserTopic[]
+    + createUserRoadmap(userTopicId : Integer, roadmapData : JSON) : UserRoadmap
+    + getUserRoadmaps(userId : Integer) : UserRoadmap[]
+    + updateUserRoadmap(roadmapId : Integer, roadmapData : JSON) : UserRoadmap
+    + deleteUserRoadmap(roadmapId : Integer, userId : Integer) : Boolean
+    + createUserVideos(userRoadmapId : Integer, level : String, videoData : JSON) : UserVideo
+    + getUserVideos(userRoadmapId : Integer, level : String, page : Integer) : UserVideo[]
+    + storeUserVideos(userRoadmapId : Integer, level : String, videoData : JSON) : UserVideo
+    + markRoadmapPointComplete(userId : Integer, roadmapId : Integer, pointId : String, isCompleted : Boolean) : RoadmapProgress
+    + getRoadmapProgress(userId : Integer, roadmapId : Integer) : RoadmapProgress[]
+    + getUserSettings(userId : Integer) : UserSettings
+    + updateUserSettings(userId : Integer, updates : JSON) : UserSettings
+  }
+
+  class NeonDbService {
+    - sql : Function
+    __
+    + constructor()
+    + testConnection() : Promise<void>
+    + closeConnection() : Promise<void>
+    - _checkConnection() : void
+    + createUser(username : String, password : String) : Promise<User>
+    + getUserByCredentials(username : String, password : String) : Promise<User>
+    + checkUserExists(username : String) : Promise<Boolean>
+    + createUserTopic(userId : Integer, topic : String) : Promise<UserTopic>
+    + getUserTopics(userId : Integer) : Promise<UserTopic[]>
+    + getUserTopicByName(userId : Integer, topicName : String) : Promise<UserTopic>
+    + createUserRoadmap(userTopicId : Integer, roadmapData : JSON) : Promise<UserRoadmap>
+    + getUserRoadmaps(userId : Integer) : Promise<UserRoadmap[]>
+    + updateUserRoadmap(roadmapId : Integer, roadmapData : JSON) : Promise<UserRoadmap>
+    + createUserVideos(userRoadmapId : Integer, level : String, videoData : JSON) : Promise<UserVideo>
+    + storeUserVideos(userRoadmapId : Integer, level : String, videoData : JSON, pageNumber : Integer, isRegenerate : Boolean) : Promise<UserVideo>
+    + getUserVideos(userRoadmapId : Integer, level : String, page : Integer) : Promise<UserVideo[]>
+    + getNextGenerationNumber(userRoadmapId : Integer, level : String, pageNumber : Integer) : Promise<Integer>
+    + moveVideosToNextPage(userRoadmapId : Integer, level : String) : Promise<Integer>
+    + deleteUserVideos(userRoadmapId : Integer, level : String) : Promise<Boolean>
+    + deleteUserRoadmap(roadmapId : Integer, userId : Integer) : Promise<Boolean>
+    + markRoadmapPointComplete(userId : Integer, roadmapId : Integer, pointId : String, isCompleted : Boolean) : Promise<RoadmapProgress>
+    + getRoadmapProgress(userId : Integer, roadmapId : Integer) : Promise<RoadmapProgress[]>
+    + getAllUserRoadmapProgress(userId : Integer) : Promise<RoadmapProgress[]>
+    + getUserSettings(userId : Integer) : Promise<UserSettings>
+    + createUserSettings(userId : Integer, settings : JSON) : Promise<UserSettings>
+    + updateUserSettings(userId : Integer, updates : JSON) : Promise<UserSettings>
+    + deleteUserSettings(userId : Integer) : Promise<Boolean>
+    + upsertUserSettings(userId : Integer, settings : JSON) : Promise<UserSettings>
+  }
+
+  class SupabaseService {
+    - pool : Pool
+    __
+    + constructor()
+    + testConnection() : Promise<void>
+    + closePool() : Promise<void>
+    - _checkConnection() : void
+    + createUser(username : String, password : String) : Promise<User>
+    + getUserByCredentials(username : String, password : String) : Promise<User>
+    + checkUserExists(username : String) : Promise<Boolean>
+    + createUserTopic(userId : Integer, topic : String) : Promise<UserTopic>
+    + getUserTopics(userId : Integer) : Promise<UserTopic[]>
+    + getUserTopicByName(userId : Integer, topicName : String) : Promise<UserTopic>
+    + createUserRoadmap(userTopicId : Integer, roadmapData : JSON) : Promise<UserRoadmap>
+    + getUserRoadmaps(userId : Integer) : Promise<UserRoadmap[]>
+    + updateUserRoadmap(roadmapId : Integer, roadmapData : JSON) : Promise<UserRoadmap>
+    + createUserVideos(userRoadmapId : Integer, level : String, videoData : JSON) : Promise<UserVideo>
+    + storeUserVideos(userRoadmapId : Integer, level : String, videoData : JSON, pageNumber : Integer, isRegenerate : Boolean) : Promise<UserVideo>
+    + getUserVideos(userRoadmapId : Integer, level : String, page : Integer) : Promise<UserVideo[]>
+    + getNextGenerationNumber(userRoadmapId : Integer, level : String, pageNumber : Integer) : Promise<Integer>
+    + moveVideosToNextPage(userRoadmapId : Integer, level : String) : Promise<Integer>
+    + deleteUserVideos(userRoadmapId : Integer, level : String) : Promise<Boolean>
+    + deleteUserRoadmap(roadmapId : Integer, userId : Integer) : Promise<Boolean>
+    + markRoadmapPointComplete(userId : Integer, roadmapId : Integer, pointId : String, isCompleted : Boolean) : Promise<RoadmapProgress>
+    + getRoadmapProgress(userId : Integer, roadmapId : Integer) : Promise<RoadmapProgress[]>
+    + getAllUserRoadmapProgress(userId : Integer) : Promise<RoadmapProgress[]>
+  }
+
+  class GeminiService {
+    - genAI : GoogleGenerativeAI
+    __
+    + constructor()
+    + generateRoadmap(topic : String, userPreferences : JSON) : Promise<JSON>
+    + generateVideoTitles(topic : String, pointTitle : String, userPreferences : JSON) : Promise<String[]>
+    - _parseRoadmapResponse(response : String) : JSON
+    - _parseVideoTitlesResponse(response : String) : String[]
+  }
+
+  class YoutubeService {
+    - youtube : youtube_v3.Youtube
+    __
+    + constructor()
+    + searchVideos(query : String, maxResults : Integer, userPreferences : JSON) : Promise<JSON[]>
+    + searchMultipleVideos(queries : String[], userPreferences : JSON) : Promise<JSON[]>
+    - _buildSearchQuery(query : String) : String
+    - _filterVideosByDuration(videos : JSON[], preference : String) : JSON[]
+    - _deduplicateVideos(videos : JSON[]) : JSON[]
+  }
+}
+
+package "Models" <<Folder>> {
+  class ResponseModels <<Utility>> {
+    + SuccessResponse : Class
+    + ErrorResponse : Class
+    + ErrorDetails : Class
+    + RoadmapDataResponse : Class
+    + PointResponse : Class
+    + ProgressResponse : Class
+    + PlaylistResponse : Class
+    + PlaylistItem : Class
+  }
+}
+
+package "Utilities" <<Folder>> {
+  class Helpers <<Utility>> {
+    {static} + generateId(prefix : String) : String
+    {static} + getCurrentTimestamp() : String
+    {static} + capitalizeWords(text : String) : String
+    {static} + extractTopicFromQuery(query : String) : String
+  }
+
+  class Logger <<Utility>> {
+    + appLogger : Object
+    + info(message : String, metadata : JSON) : void
+    + error(message : String, error : Error, metadata : JSON) : void
+    + warn(message : String, metadata : JSON) : void
+  }
+
+  class Security <<Utility>> {
+    + rateLimiter : Function
+    + userDataLimiter : Function
+    + handleValidationErrors(request : Request, response : Response, next : Function) : void
+  }
+}
+
+' UML Relationships (Standard Notation)
+DatabaseService <|.. NeonDbService : implements
+DatabaseService <|.. SupabaseService : implements
+
+UserRoutes --> DatabaseService : uses
+UserRoutes --> ResponseModels : creates  
+UserRoutes --> Logger : logs
+UserRoutes --> Security : applies
+
+RoadmapRoutes --> GeminiService : uses
+RoadmapRoutes --> DatabaseService : stores
+RoadmapRoutes --> ResponseModels : creates
+RoadmapRoutes --> Logger : logs
+
+PlaylistRoutes --> GeminiService : uses
+PlaylistRoutes --> YoutubeService : searches
+PlaylistRoutes --> DatabaseService : stores
+PlaylistRoutes --> ResponseModels : creates
+PlaylistRoutes --> Logger : logs
+
+GeminiService --> Helpers : uses
+YoutubeService --> Helpers : uses
+DatabaseService --> Logger : logs
+
+note top of DatabaseService : Interface defining database\noperations contract
+note top of NeonDbService : Serverless PostgreSQL\nimplementation
+note top of SupabaseService : Connection pool\nimplementation
+note top of GeminiService : AI service for content\ngeneration
+note top of YoutubeService : External API integration\nfor video search
+
+@enduml
