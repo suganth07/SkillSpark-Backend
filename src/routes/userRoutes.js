@@ -1109,7 +1109,7 @@ router.delete('/account/:userId', userDataLimiter, async (req, res) => {
 
     appLogger.info('User account deleted successfully', {
       userId,
-      username: userResult.rows[0].username,
+      username: userResult[0].username,
       processingTime: `${processingTime}ms`,
       ip: req.ip,
     });
