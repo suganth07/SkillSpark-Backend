@@ -5,6 +5,7 @@ import compression from "compression";
 import roadmapRoutes from "./src/routes/roadmapRoutes.js";
 import playlistRoutes from "./src/routes/playlistRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
+import quizRoutes from "./src/routes/quizRoutes.js";
 import neonDbService from "./src/services/neonDbService.js";
 import {
   helmetConfig,
@@ -66,6 +67,7 @@ app.use(generalLimiter);
 app.use("/api/roadmaps", roadmapRoutes);
 app.use("/api/playlists", playlistRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/quizzes", quizRoutes);
 
 app.get("/health", (req, res) => {
   res.json({

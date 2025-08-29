@@ -35,6 +35,11 @@ export const playlistLimiter = createRateLimiter({
   max: 30, // Increased from 10 to 30
 });
 
+export const quizLimiter = createRateLimiter({
+  windowMs: 2 * 60 * 1000, // 2 minutes  
+  max: 10, // limit each IP to 10 quiz requests per windowMs
+});
+
 export const userDataLimiter = createRateLimiter({
   windowMs: 60 * 1000, // 1 minute
   max: 100, // Allow more requests for user data operations
@@ -131,6 +136,38 @@ export const validatePlaylistInput = [
         error: {
           code: "VALIDATION_ERROR",
           message: "Invalid input data",
+          details: errors
+            .array()
+            .map((err) => `${err.path}: ${err.msg}`)
+            .join(", "),
+        },
+      });
+    }
+    next();
+  },
+];
+
+export const validateQuizInput = [
+  body("userId")
+    .optional()
+    .isUUID()
+    .withMessage("User ID must be a valid UUID"),
+  body("answers")
+    .optional()
+    .isArray()
+    .withMessage("Answers must be an array"),
+  body("timeInSeconds")
+    .optional()
+    .isInt({ min: 0, max: 3600 })
+    .withMessage("Time must be between 0 and 3600 seconds"),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "VALIDATION_ERROR", 
+          message: "Invalid quiz input data",
           details: errors
             .array()
             .map((err) => `${err.path}: ${err.msg}`)

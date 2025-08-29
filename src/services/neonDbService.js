@@ -1215,6 +1215,332 @@ class DatabaseService {
       throw new Error(`Failed to upsert user settings: ${error.message}`);
     }
   }
+
+  // Quiz Management Operations
+  async createUserQuiz(userRoadmapId, quizData, totalQuestions = 15, difficultyLevel = 'mixed') {
+    this._checkConnection();
+    try {
+      console.log(`🧠 Creating quiz for roadmap: ${userRoadmapId}`);
+      
+      const result = await this.sql`
+        INSERT INTO user_quizzes (user_roadmap_id, quiz_data, total_questions, difficulty_level)
+        VALUES (${userRoadmapId}, ${JSON.stringify(quizData)}, ${totalQuestions}, ${difficultyLevel})
+        RETURNING id, user_roadmap_id, quiz_data, total_questions, difficulty_level, created_at, updated_at
+      `;
+      
+      console.log('✅ Created quiz successfully');
+      return result[0];
+    } catch (error) {
+      console.error('❌ Failed to create quiz:', error);
+      throw new Error(`Failed to create quiz: ${error.message}`);
+    }
+  }
+
+  async getUserQuiz(userRoadmapId) {
+    this._checkConnection();
+    try {
+      console.log(`🔍 Getting quiz for roadmap: ${userRoadmapId}`);
+      
+      const result = await this.sql`
+        SELECT uq.*, ur.roadmap_data, ut.topic
+        FROM user_quizzes uq
+        INNER JOIN user_roadmaps ur ON uq.user_roadmap_id = ur.id
+        INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
+        WHERE uq.user_roadmap_id = ${userRoadmapId}
+        ORDER BY uq.created_at DESC
+        LIMIT 1
+      `;
+      
+      if (result.length > 0) {
+        // Parse quiz_data if it's a string
+        const quiz = result[0];
+        if (typeof quiz.quiz_data === 'string') {
+          quiz.quiz_data = JSON.parse(quiz.quiz_data);
+        }
+        console.log('✅ Found existing quiz');
+        return quiz;
+      }
+      
+      console.log('📭 No quiz found for roadmap');
+      return null;
+    } catch (error) {
+      console.error('❌ Failed to get quiz:', error);
+      throw new Error(`Failed to get quiz: ${error.message}`);
+    }
+  }
+
+  async submitQuizAttempt(userQuizId, userId, userAnswers, score, totalQuestions, percentage, timeInSeconds = null) {
+    this._checkConnection();
+    try {
+      console.log(`📝 Submitting quiz attempt for user: ${userId}, quiz: ${userQuizId}`);
+      
+      const result = await this.sql`
+        INSERT INTO quiz_attempts (user_quiz_id, user_id, user_answers, score, total_questions, percentage, time_taken)
+        VALUES (${userQuizId}, ${userId}, ${JSON.stringify(userAnswers)}, ${score}, ${totalQuestions}, ${percentage}, ${timeInSeconds})
+        RETURNING id, user_quiz_id, user_id, score, total_questions, percentage, time_taken, completed_at, created_at
+      `;
+      
+      console.log(`✅ Quiz attempt submitted: ${score}/${totalQuestions} (${percentage}%)`);
+      return result[0];
+    } catch (error) {
+      console.error('❌ Failed to submit quiz attempt:', error);
+      throw new Error(`Failed to submit quiz attempt: ${error.message}`);
+    }
+  }
+
+  async getUserQuizAttempts(userId) {
+    this._checkConnection();
+    try {
+      console.log(`📊 Getting all quiz attempts for user: ${userId}`);
+      
+      const result = await this.sql`
+        SELECT qa.*, uq.quiz_data, ur.roadmap_data, ut.topic
+        FROM quiz_attempts qa
+        INNER JOIN user_quizzes uq ON qa.user_quiz_id = uq.id  
+        INNER JOIN user_roadmaps ur ON uq.user_roadmap_id = ur.id
+        INNER JOIN user_topics ut ON ur.user_topic_id = ut.id
+        WHERE qa.user_id = ${userId}
+        ORDER BY qa.completed_at DESC
+      `;
+      
+      // Parse JSON data
+      const parsedResults = result.map(item => ({
+        ...item,
+        user_answers: typeof item.user_answers === 'string' ? JSON.parse(item.user_answers) : item.user_answers,
+        quiz_data: typeof item.quiz_data === 'string' ? JSON.parse(item.quiz_data) : item.quiz_data,
+        roadmap_data: typeof item.roadmap_data === 'string' ? JSON.parse(item.roadmap_data) : item.roadmap_data
+      }));
+      
+      console.log(`✅ Found ${parsedResults.length} quiz attempts`);
+      return parsedResults;
+    } catch (error) {
+      console.error('❌ Failed to get user quiz attempts:', error);
+      throw new Error(`Failed to get user quiz attempts: ${error.message}`);
+    }
+  }
+
+  async getQuizAttemptsForRoadmap(userId, userRoadmapId) {
+    this._checkConnection();
+    try {
+      console.log(`📊 Getting quiz attempts for user: ${userId}, roadmap: ${userRoadmapId}`);
+      
+      const result = await this.sql`
+        SELECT qa.*, uq.quiz_data
+        FROM quiz_attempts qa
+        INNER JOIN user_quizzes uq ON qa.user_quiz_id = uq.id
+        WHERE qa.user_id = ${userId} AND uq.user_roadmap_id = ${userRoadmapId}
+        ORDER BY qa.completed_at DESC
+      `;
+      
+      // Parse JSON data
+      const parsedResults = result.map(item => ({
+        ...item,
+        user_answers: typeof item.user_answers === 'string' ? JSON.parse(item.user_answers) : item.user_answers,
+        quiz_data: typeof item.quiz_data === 'string' ? JSON.parse(item.quiz_data) : item.quiz_data
+      }));
+      
+      console.log(`✅ Found ${parsedResults.length} attempts for roadmap`);
+      return parsedResults;
+    } catch (error) {
+      console.error('❌ Failed to get roadmap quiz attempts:', error);
+      throw new Error(`Failed to get roadmap quiz attempts: ${error.message}`);
+    }
+  }
+
+  async getQuizStatistics(userRoadmapId) {
+    this._checkConnection();
+    try {
+      console.log(`📈 Getting quiz statistics for roadmap: ${userRoadmapId}`);
+      
+      const result = await this.sql`
+        SELECT 
+          COUNT(*) as total_attempts,
+          AVG(percentage) as avg_percentage,
+          MAX(percentage) as best_percentage,
+          MIN(percentage) as worst_percentage,
+          AVG(time_taken) as avg_time_taken
+        FROM quiz_attempts qa
+        INNER JOIN user_quizzes uq ON qa.user_quiz_id = uq.id
+        WHERE uq.user_roadmap_id = ${userRoadmapId}
+      `;
+      
+      const stats = result[0];
+      if (stats && stats.total_attempts > 0) {
+        // Convert numeric strings to numbers
+        const processedStats = {
+          totalAttempts: parseInt(stats.total_attempts),
+          avgPercentage: parseFloat(stats.avg_percentage) || 0,
+          bestPercentage: parseFloat(stats.best_percentage) || 0,
+          worstPercentage: parseFloat(stats.worst_percentage) || 0,
+          avgTimeInSeconds: parseInt(stats.avg_time_taken) || 0
+        };
+        
+        console.log('✅ Quiz statistics calculated:', processedStats);
+        return processedStats;
+      }
+      
+      console.log('📭 No quiz attempts found for statistics');
+      return {
+        totalAttempts: 0,
+        avgPercentage: 0,
+        bestPercentage: 0,
+        worstPercentage: 0,
+        avgTimeInSeconds: 0
+      };
+    } catch (error) {
+      console.error('❌ Failed to get quiz statistics:', error);
+      throw new Error(`Failed to get quiz statistics: ${error.message}`);
+    }
+  }
+
+  async updateUserQuiz(userRoadmapId, quizData, totalQuestions = 15, difficultyLevel = 'mixed') {
+    this._checkConnection();
+    try {
+      console.log(`🔄 Updating quiz for roadmap: ${userRoadmapId}`);
+      
+      const result = await this.sql`
+        UPDATE user_quizzes 
+        SET quiz_data = ${JSON.stringify(quizData)}, total_questions = ${totalQuestions}, difficulty_level = ${difficultyLevel}, updated_at = NOW()
+        WHERE user_roadmap_id = ${userRoadmapId}
+        RETURNING id, user_roadmap_id, quiz_data, total_questions, difficulty_level, created_at, updated_at
+      `;
+      
+      if (result.length > 0) {
+        console.log('✅ Quiz updated successfully');
+        return result[0];
+      } else {
+        throw new Error('No quiz found to update');
+      }
+    } catch (error) {
+      console.error('❌ Failed to update quiz:', error);
+      throw new Error(`Failed to update quiz: ${error.message}`);
+    }
+  }
+
+  async deleteQuizData(userRoadmapId) {
+    this._checkConnection();
+    try {
+      console.log(`🗑️ Deleting quiz data for roadmap: ${userRoadmapId}`);
+      
+      // First delete quiz attempts (foreign key constraint)
+      await this.sql`
+        DELETE FROM quiz_attempts 
+        WHERE user_quiz_id IN (
+          SELECT id FROM user_quizzes WHERE user_roadmap_id = ${userRoadmapId}
+        )
+      `;
+      console.log('✅ Deleted quiz attempts');
+      
+      // Then delete the quiz
+      const result = await this.sql`
+        DELETE FROM user_quizzes WHERE user_roadmap_id = ${userRoadmapId}
+        RETURNING id
+      `;
+      
+      console.log(`✅ Deleted quiz data: ${result.length} quiz(s) removed`);
+      return result.length > 0;
+    } catch (error) {
+      console.error('❌ Failed to delete quiz data:', error);
+      throw new Error(`Failed to delete quiz data: ${error.message}`);
+    }
+  }
+
+  // Quiz Progress Methods
+  async saveQuizProgress(userQuizId, userId, questionIndex, selectedOption, timeSpent) {
+    this._checkConnection();
+    try {
+      console.log(`💾 Saving quiz progress: Q${questionIndex + 1} = Option ${selectedOption + 1}`);
+      
+      const result = await this.sql`
+        INSERT INTO quiz_progress (user_quiz_id, user_id, question_index, selected_option, time_spent)
+        VALUES (${userQuizId}, ${userId}, ${questionIndex}, ${selectedOption}, ${timeSpent})
+        ON CONFLICT (user_quiz_id, question_index)
+        DO UPDATE SET 
+          selected_option = EXCLUDED.selected_option,
+          time_spent = EXCLUDED.time_spent,
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING id, user_quiz_id, user_id, question_index, selected_option, time_spent, created_at, updated_at
+      `;
+      
+      console.log('✅ Quiz progress saved successfully');
+      return result[0];
+    } catch (error) {
+      console.error('❌ Failed to save quiz progress:', error);
+      throw new Error(`Failed to save quiz progress: ${error.message}`);
+    }
+  }
+
+  async getQuizProgress(userQuizId, userId) {
+    this._checkConnection();
+    try {
+      console.log(`📋 Getting quiz progress for quiz: ${userQuizId}`);
+      
+      const result = await this.sql`
+        SELECT question_index, selected_option, time_spent, created_at, updated_at
+        FROM quiz_progress
+        WHERE user_quiz_id = ${userQuizId} AND user_id = ${userId}
+        ORDER BY question_index ASC
+      `;
+      
+      console.log(`✅ Retrieved ${result.length} saved answers`);
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to get quiz progress:', error);
+      throw new Error(`Failed to get quiz progress: ${error.message}`);
+    }
+  }
+
+  async clearQuizProgress(userQuizId, userId) {
+    this._checkConnection();
+    try {
+      console.log(`🧹 Clearing quiz progress for quiz: ${userQuizId}`);
+      
+      const result = await this.sql`
+        DELETE FROM quiz_progress 
+        WHERE user_quiz_id = ${userQuizId} AND user_id = ${userId}
+        RETURNING id
+      `;
+      
+      console.log(`✅ Cleared ${result.length} progress entries`);
+      return result.length;
+    } catch (error) {
+      console.error('❌ Failed to clear quiz progress:', error);
+      throw new Error(`Failed to clear quiz progress: ${error.message}`);
+    }
+  }
+
+  async generateOrGetQuiz(userRoadmapId, roadmapData) {
+    this._checkConnection();
+    try {
+      console.log(`🎯 Generating or getting quiz for roadmap: ${userRoadmapId}`);
+      
+      // Check if quiz already exists
+      const existingQuiz = await this.getUserQuiz(userRoadmapId);
+      if (existingQuiz) {
+        console.log('📋 Using existing quiz');
+        return existingQuiz;
+      }
+      
+      // Generate new quiz using Gemini AI
+      console.log('🧠 Generating new quiz with AI...');
+      const geminiService = await import('./geminiService.js');
+      const quizData = await geminiService.default.generateQuiz(roadmapData);
+      
+      // Save quiz to database
+      const createdQuiz = await this.createUserQuiz(
+        userRoadmapId, 
+        quizData, 
+        quizData.questions.length,
+        'mixed'
+      );
+      
+      console.log('✅ Quiz generated and saved successfully');
+      return createdQuiz;
+    } catch (error) {
+      console.error('❌ Failed to generate or get quiz:', error);
+      throw new Error(`Failed to generate or get quiz: ${error.message}`);
+    }
+  }
 }
 
 export default new DatabaseService();

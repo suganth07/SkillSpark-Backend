@@ -242,6 +242,190 @@ class GeminiService {
       throw new Error(`Failed to generate video titles: ${error.message}`);
     }
   }
+
+  async generateQuiz(
+    roadmapData,
+    userPreferences = { default_roadmap_depth: "detailed", default_video_length: "medium" }
+  ) {
+    try {
+      // Extract topic and roadmap structure
+      const topic = roadmapData.extractedTopic || roadmapData.topic || "General Programming";
+      const roadmap = roadmapData.roadmap || {};
+      
+      // Collect all learning points from all levels
+      const allPoints = [];
+      ['beginner', 'intermediate', 'advanced'].forEach(level => {
+        if (roadmap[level]) {
+          if (Array.isArray(roadmap[level])) {
+            // Old format: array of strings
+            roadmap[level].forEach((point, index) => {
+              allPoints.push({
+                title: typeof point === 'string' ? point : point.title || point.pointTitle,
+                level: level,
+                stepId: `step_${index + 1}`
+              });
+            });
+          } else if (typeof roadmap[level] === 'object') {
+            // New format: object with step keys
+            Object.entries(roadmap[level]).forEach(([stepId, stepData]) => {
+              allPoints.push({
+                title: stepData.pointTitle || stepData.title || stepData,
+                level: level,
+                stepId: stepId
+              });
+            });
+          }
+        }
+      });
+
+      const prompt = `
+        Generate a comprehensive 15-question multiple choice quiz for "${topic}" based on the following learning roadmap.
+
+        Learning Path Overview:
+        ${allPoints.map(point => `- ${point.level.toUpperCase()}: ${point.title}`).join('\n')}
+
+        Quiz Requirements:
+        1. Generate exactly 15 questions total
+        2. Distribution: 5 beginner + 5 intermediate + 5 advanced questions
+        3. Each question must have exactly 4 options (A, B, C, D)
+        4. Cover different topics from the roadmap evenly
+        5. Include practical, scenario-based questions when possible
+        6. Provide clear explanations for correct answers
+
+        Question Guidelines:
+        - BEGINNER: Basic concepts, definitions, fundamental principles
+        - INTERMEDIATE: Application, best practices, common scenarios  
+        - ADVANCED: Complex scenarios, optimization, architecture decisions
+
+        Format the response as a JSON object with this exact structure:
+        {
+          "questions": [
+            {
+              "id": "q1",
+              "question": "What is the primary purpose of React components?",
+              "options": [
+                "To handle database operations",
+                "To create reusable UI elements", 
+                "To manage server requests",
+                "To style web pages"
+              ],
+              "correctAnswer": 1,
+              "difficulty": "beginner",
+              "topic": "React Components",
+              "explanation": "React components are the building blocks of React applications, designed to create reusable UI elements that can manage their own state and lifecycle."
+            }
+          ],
+          "metadata": {
+            "topic": "${topic}",
+            "totalQuestions": 15,
+            "difficultyDistribution": {
+              "beginner": 5,
+              "intermediate": 5,
+              "advanced": 5
+            },
+            "generatedAt": "${new Date().toISOString()}"
+          }
+        }
+
+        Important Notes:
+        - correctAnswer should be the INDEX (0-3) of the correct option
+        - Make questions specific to ${topic} development
+        - Avoid overly tricky or ambiguous questions
+        - Focus on practical knowledge that developers actually use
+        - Ensure explanations are educational and helpful
+
+        Return only the JSON object, no additional text or formatting.
+      `;
+
+      const response = await this.ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+      });
+
+      const responseText = response.text;
+
+      // Clean up the response text and extract JSON
+      console.log("🔍 Raw Gemini quiz response:", responseText);
+      
+      let jsonText = responseText;
+      
+      // Remove code block markers if present
+      const codeBlockMatch = responseText.match(/```(?:json)?\s*(\{.*\})\s*```/s);
+      if (codeBlockMatch) {
+        jsonText = codeBlockMatch[1];
+      } else {
+        // Try to extract JSON from the response
+        const jsonMatch = responseText.match(/\{.*\}/s);
+        if (jsonMatch) {
+          jsonText = jsonMatch[0];
+        }
+      }
+      
+      console.log("🔍 Extracted quiz JSON text:", jsonText);
+      
+      if (!jsonText || jsonText.trim() === '') {
+        throw new Error("No valid JSON found in quiz response");
+      }
+      
+      // Clean up common JSON issues
+      jsonText = jsonText
+        .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+        .replace(/[\r\n\t]/g, ' ') // Replace line breaks and tabs
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
+      
+      console.log("🔍 Cleaned quiz JSON text:", jsonText);
+
+      const quizData = JSON.parse(jsonText);
+
+      // Validate quiz structure
+      if (!quizData.questions || !Array.isArray(quizData.questions)) {
+        throw new Error("Invalid quiz structure: questions array missing");
+      }
+
+      if (quizData.questions.length !== 15) {
+        console.warn(`Expected 15 questions, got ${quizData.questions.length}`);
+      }
+
+      // Validate each question
+      quizData.questions.forEach((question, index) => {
+        if (!question.question || !question.options || !Array.isArray(question.options)) {
+          throw new Error(`Invalid question structure at index ${index}`);
+        }
+        if (question.options.length !== 4) {
+          throw new Error(`Question ${index + 1} must have exactly 4 options`);
+        }
+        if (typeof question.correctAnswer !== 'number' || question.correctAnswer < 0 || question.correctAnswer > 3) {
+          throw new Error(`Question ${index + 1} has invalid correctAnswer index`);
+        }
+      });
+
+      // Add metadata if missing
+      if (!quizData.metadata) {
+        quizData.metadata = {
+          topic: topic,
+          totalQuestions: quizData.questions.length,
+          difficultyDistribution: {
+            beginner: quizData.questions.filter(q => q.difficulty === 'beginner').length,
+            intermediate: quizData.questions.filter(q => q.difficulty === 'intermediate').length,
+            advanced: quizData.questions.filter(q => q.difficulty === 'advanced').length
+          },
+          generatedAt: new Date().toISOString()
+        };
+      }
+
+      console.log("✅ Generated quiz successfully:", {
+        topic: quizData.metadata.topic,
+        totalQuestions: quizData.questions.length,
+        distribution: quizData.metadata.difficultyDistribution
+      });
+
+      return quizData;
+    } catch (error) {
+      console.error("Error generating quiz:", error);
+      throw new Error(`Failed to generate quiz: ${error.message}`);
+    }
+  }
 }
 
 export default new GeminiService();

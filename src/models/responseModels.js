@@ -170,3 +170,43 @@ export const validatePlaylistRequest = (body) => {
     userId: body.userId || null,
   };
 };
+
+// Quiz-related response models
+export class QuizItem {
+  constructor({
+    id,
+    question,
+    options = [],
+    correctAnswer,
+    difficulty = 'medium',
+    topic,
+    explanation = ''
+  }) {
+    this.id = id;
+    this.question = question;
+    this.options = options; // Array of 4 options
+    this.correctAnswer = correctAnswer; // Index (0-3) of correct option
+    this.difficulty = difficulty; // 'beginner', 'intermediate', 'advanced'
+    this.topic = topic;
+    this.explanation = explanation;
+  }
+}
+
+export class QuizSuccessResponse {
+  constructor(quiz) {
+    this.success = true;
+    this.data = quiz;
+  }
+}
+
+export class QuizAttemptResponse {
+  constructor(attempt, results, quiz, userAnswers) {
+    this.success = true;
+    this.data = {
+      attempt,
+      results,
+      quiz,
+      userAnswers
+    };
+  }
+}
