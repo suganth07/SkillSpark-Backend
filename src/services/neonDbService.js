@@ -547,6 +547,66 @@ class DatabaseService {
     }
   }
 
+  // Method to get all steps from a roadmap level for video generation
+  async getRoadmapSteps(userRoadmapId, level) {
+    this._checkConnection();
+    try {
+      const result = await this.sql`
+        SELECT roadmap_data FROM user_roadmaps WHERE id = ${userRoadmapId}
+      `;
+      
+      if (result.length === 0) {
+        throw new Error('Roadmap not found');
+      }
+      
+      const roadmapData = typeof result[0].roadmap_data === 'string' 
+        ? JSON.parse(result[0].roadmap_data) 
+        : result[0].roadmap_data;
+      
+      const steps = [];
+      
+      // Check if roadmap has the new step-based structure
+      if (roadmapData.roadmap && roadmapData.roadmap[level]) {
+        const levelData = roadmapData.roadmap[level];
+        
+        if (typeof levelData === 'object' && !Array.isArray(levelData)) {
+          // New format: object with step keys
+          Object.entries(levelData).forEach(([stepId, stepData]) => {
+            steps.push({
+              pointId: stepId,
+              pointTitle: stepData.pointTitle || stepData.title,
+              title: stepData.pointTitle || stepData.title,
+              level: level,
+              description: stepData.description || `Learn about ${stepData.pointTitle || stepData.title}`
+            });
+          });
+        }
+      }
+      
+      // Fallback: check old points structure
+      if (steps.length === 0 && roadmapData.points) {
+        const levelPoints = roadmapData.points
+          .filter(point => point.level === level)
+          .sort((a, b) => a.order - b.order);
+        
+        levelPoints.forEach(point => {
+          steps.push({
+            pointId: point.id, // This should now be step_X format
+            pointTitle: point.title,
+            title: point.title,
+            level: point.level,
+            description: point.description
+          });
+        });
+      }
+      
+      return steps;
+      
+    } catch (error) {
+      throw new Error(`Failed to get roadmap steps: ${error.message}`);
+    }
+  }
+
   async storeUserVideos(userRoadmapId, level, videoData, pageNumber = 1, pointId = null, isRegenerate = false, stepIndex = null) {
     this._checkConnection();
     

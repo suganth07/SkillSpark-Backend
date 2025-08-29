@@ -252,7 +252,17 @@ router.post(
       // Store videos in database if userRoadmapId and level are provided
       if (userRoadmapId && level && playlists.length > 0) {
         try {
+          console.log("📹 DEBUG - About to store videos:", {
+            userRoadmapId,
+            level,
+            pointId,
+            playlistCount: playlists.length,
+            pointIdType: typeof pointId
+          });
+          
           await neonDbService.storeUserVideos(userRoadmapId, level, playlists, 1, pointId);
+          
+          console.log("✅ DEBUG - Videos successfully stored");
           appLogger.info("Videos stored in database", {
             userRoadmapId,
             level,
@@ -260,6 +270,7 @@ router.post(
             ip: req.ip,
           });
         } catch (error) {
+          console.error("❌ DEBUG - Failed to store videos:", error.message);
           appLogger.error("Failed to store videos in database", error, {
             userRoadmapId,
             level,
@@ -268,6 +279,12 @@ router.post(
           });
           // Continue with response even if storage fails
         }
+      } else {
+        console.log("⚠️ DEBUG - Storage conditions not met:", {
+          userRoadmapId: !!userRoadmapId,
+          level: !!level,
+          playlistLength: playlists.length
+        });
       }
 
       const response = new PlaylistSuccessResponse(playlists);
@@ -1015,5 +1032,210 @@ router.get('/point-videos/:userRoadmapId/:level', async (req, res) => {
     });
   }
 });
+
+// Route for generating videos for all steps in a roadmap level
+router.post(
+  "/generate-all-steps",
+  playlistLimiter,
+  async (req, res) => {
+    const startTime = Date.now();
+
+    try {
+      const { 
+        topic, 
+        level, 
+        userRoadmapId, 
+        userId,
+        userPreferences 
+      } = req.body;
+
+      // Validate required parameters
+      if (!topic || !level || !userRoadmapId) {
+        const errorResponse = new ErrorResponse(
+          new ErrorDetails(
+            "MISSING_PARAMETERS",
+            "Missing required parameters",
+            "topic, level, and userRoadmapId are required"
+          )
+        );
+        return res.status(400).json(errorResponse);
+      }
+
+      console.log(`🚀 Generating videos for ALL steps in ${level} level of roadmap ${userRoadmapId}`);
+      
+      // Get all steps from the roadmap for this level
+      const steps = await neonDbService.getRoadmapSteps(userRoadmapId, level);
+      
+      if (steps.length === 0) {
+        const errorResponse = new ErrorResponse(
+          new ErrorDetails(
+            "NO_STEPS_FOUND",
+            "No steps found for this level",
+            `No learning steps found for ${level} level in roadmap ${userRoadmapId}`
+          )
+        );
+        return res.status(404).json(errorResponse);
+      }
+
+      console.log(`📚 Found ${steps.length} steps to generate videos for`);
+      
+      // Get user preferences
+      let finalUserPreferences = {
+        defaultRoadmapDepth: 'detailed',
+        defaultVideoLength: 'medium'
+      };
+
+      if (userId) {
+        try {
+          const userSettings = await supabaseService.getUserSettings(userId);
+          finalUserPreferences = {
+            defaultRoadmapDepth: userSettings.default_roadmap_depth || 'detailed',
+            defaultVideoLength: userSettings.default_video_length || 'medium'
+          };
+        } catch (settingsError) {
+          console.log("Using default preferences for video generation");
+        }
+      }
+
+      const results = [];
+      const errors = [];
+
+      // Generate videos for each step
+      for (const step of steps) {
+        try {
+          console.log(`📹 Generating videos for ${step.pointId}: ${step.pointTitle}`);
+          
+          // Check if videos already exist for this step
+          const existingVideos = await neonDbService.getUserVideos(userRoadmapId, level, 1, step.pointId);
+          if (existingVideos.length > 0) {
+            console.log(`📹 Videos already exist for ${step.pointId}, skipping`);
+            
+            results.push({
+              pointId: step.pointId,
+              pointTitle: step.pointTitle,
+              videoCount: existingVideos[0].video_data.length,
+              status: 'existing'
+            });
+            continue;
+          }
+
+          // Generate video titles for this specific step
+          const videoTitles = await geminiService.generateVideoTitles(
+            topic,
+            step.pointTitle,
+            finalUserPreferences
+          );
+
+          // Search for videos
+          const videoResults = await youtubeService.searchMultipleVideos(
+            videoTitles,
+            finalUserPreferences
+          );
+
+          // Create playlist items
+          const playlists = [];
+          const usedVideoIds = new Set();
+
+          for (const result of videoResults) {
+            if (result && result.videoId && !usedVideoIds.has(result.videoId)) {
+              const playlistItem = new PlaylistItem({
+                id: result.videoId,
+                title: result.title,
+                description: result.description,
+                duration: result.duration,
+                channelTitle: result.channelTitle,
+                publishedAt: result.publishedAt || null,
+              });
+
+              playlists.push(playlistItem);
+              usedVideoIds.add(result.videoId);
+            }
+          }
+
+          // Store videos in database with the step ID from roadmap
+          if (playlists.length > 0) {
+            await neonDbService.storeUserVideos(userRoadmapId, level, playlists, 1, step.pointId);
+            
+            results.push({
+              pointId: step.pointId,
+              pointTitle: step.pointTitle,
+              videoCount: playlists.length,
+              status: 'generated'
+            });
+
+            console.log(`✅ Generated and stored ${playlists.length} videos for ${step.pointId}: ${step.pointTitle}`);
+          } else {
+            errors.push({
+              pointId: step.pointId,
+              pointTitle: step.pointTitle,
+              error: 'No videos found'
+            });
+          }
+
+        } catch (stepError) {
+          console.error(`❌ Error generating videos for ${step.pointId}:`, stepError);
+          errors.push({
+            pointId: step.pointId,
+            pointTitle: step.pointTitle,
+            error: stepError.message
+          });
+        }
+      }
+
+      const processingTime = Date.now() - startTime;
+
+      appLogger.info("Generated videos for all steps in level", {
+        topic,
+        level,
+        userRoadmapId,
+        totalSteps: steps.length,
+        successCount: results.length,
+        errorCount: errors.length,
+        processingTime: `${processingTime}ms`,
+        ip: req.ip,
+      });
+
+      const response = {
+        success: true,
+        data: {
+          results,
+          errors,
+          summary: {
+            totalSteps: steps.length,
+            generated: results.filter(r => r.status === 'generated').length,
+            existing: results.filter(r => r.status === 'existing').length,
+            failed: errors.length,
+            processingTime: `${processingTime}ms`
+          }
+        }
+      };
+
+      res.json(response);
+
+    } catch (error) {
+      const processingTime = Date.now() - startTime;
+
+      appLogger.error("Error generating videos for all steps", error, {
+        topic: req.body?.topic,
+        level: req.body?.level,
+        userRoadmapId: req.body?.userRoadmapId,
+        processingTime: `${processingTime}ms`,
+        ip: req.ip,
+      });
+
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails(
+          "STEP_GENERATION_FAILED",
+          "Failed to generate videos for all steps",
+          process.env.NODE_ENV === "production"
+            ? "Please try again later"
+            : error.message
+        )
+      );
+
+      res.status(500).json(errorResponse);
+    }
+  }
+);
 
 export default router;
