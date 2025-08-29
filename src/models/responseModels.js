@@ -166,5 +166,7 @@ export const validatePlaylistRequest = (body) => {
     },
     userRoadmapId: body.userRoadmapId || null,
     level: body.level || null,
+    pointId: body.pointId || null, // Add pointId support
+    userId: body.userId || null,
   };
 };

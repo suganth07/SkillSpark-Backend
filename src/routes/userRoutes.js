@@ -320,6 +320,41 @@ router.post('/roadmaps', async (req, res) => {
   }
 });
 
+// Migration endpoint to convert roadmaps to use sequential step IDs
+router.post('/migrate-roadmaps', async (req, res) => {
+  try {
+    console.log('🔄 Starting roadmap migration to sequential step IDs');
+    
+    const migrationResult = await neonDbService.migrateAllRoadmapsToStepIds();
+    
+    appLogger.info('Roadmap migration completed', {
+      ...migrationResult,
+      ip: req.ip,
+    });
+
+    const successResponse = new SuccessResponse({
+      message: 'Roadmap migration completed successfully',
+      ...migrationResult
+    });
+    
+    res.json(successResponse);
+  } catch (error) {
+    appLogger.error('Failed to migrate roadmaps', error, {
+      ip: req.ip,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'MIGRATION_FAILED',
+        'Failed to migrate roadmaps to sequential step IDs',
+        process.env.NODE_ENV === 'production' ? 'Please try again later' : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
 // Get user roadmaps endpoint
 router.get('/roadmaps/:userId', userDataLimiter, async (req, res) => {
   try {
@@ -534,7 +569,7 @@ router.get('/progress/:userId', userDataLimiter, async (req, res) => {
 router.get('/videos/:roadmapId', userDataLimiter, async (req, res) => {
   try {
     const { roadmapId } = req.params;
-    const { level, userId, page = 1 } = req.query;
+    const { level, userId, page = 1, pointId } = req.query;
 
     if (!roadmapId || !userId) {
       return res.status(400).json({ 
@@ -548,6 +583,7 @@ router.get('/videos/:roadmapId', userDataLimiter, async (req, res) => {
       level: level || 'all',
       userId,
       page: parseInt(page),
+      pointId: pointId || 'none',
       ip: req.ip,
     });
 
@@ -562,14 +598,14 @@ router.get('/videos/:roadmapId', userDataLimiter, async (req, res) => {
       });
     }
 
-    const videos = await neonDbService.getUserVideos(roadmapId, level, parseInt(page));
+    const videos = await neonDbService.getUserVideos(roadmapId, level, parseInt(page), pointId);
     
     console.log(`✅ Found ${videos.length} video records for roadmap: ${roadmapId}, page: ${page}`);
 
     // Check if there are more pages by trying to fetch the next page
     let hasMore = false;
     try {
-      const nextPageVideos = await neonDbService.getUserVideos(roadmapId, level, parseInt(page) + 1);
+      const nextPageVideos = await neonDbService.getUserVideos(roadmapId, level, parseInt(page) + 1, pointId);
       hasMore = nextPageVideos.length > 0;
     } catch (error) {
       // If error fetching next page, assume no more pages
@@ -1109,7 +1145,7 @@ router.delete('/account/:userId', userDataLimiter, async (req, res) => {
 
     appLogger.info('User account deleted successfully', {
       userId,
-      username: userResult.rows[0].username,
+      username: userResult[0]?.username || 'Unknown',
       processingTime: `${processingTime}ms`,
       ip: req.ip,
     });
@@ -1136,6 +1172,34 @@ router.delete('/account/:userId', userDataLimiter, async (req, res) => {
       )
     );
 
+    res.status(500).json(errorResponse);
+  }
+});
+
+// Migration route to update roadmap structure with step IDs
+router.post('/admin/migrate-roadmaps', async (req, res) => {
+  try {
+    console.log('🔄 Starting roadmap migration...');
+    
+    const migrationResult = await neonDbService.migrateAllRoadmaps();
+    
+    const successResponse = new SuccessResponse({
+      message: 'Roadmap migration completed successfully',
+      result: migrationResult
+    });
+    
+    res.json(successResponse);
+  } catch (error) {
+    console.error('❌ Migration failed:', error);
+    
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        'MIGRATION_FAILED',
+        'Failed to migrate roadmaps',
+        error.message
+      )
+    );
+    
     res.status(500).json(errorResponse);
   }
 });

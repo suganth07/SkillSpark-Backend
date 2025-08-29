@@ -193,12 +193,169 @@ class DatabaseService {
   }
 
   // User Roadmaps
+  processRoadmapWithStepIds(roadmapData) {
+    // Convert simple array format to object format with sequential step IDs
+    const processedRoadmap = { ...roadmapData };
+    
+    if (processedRoadmap.roadmap) {
+      const levels = ['beginner', 'intermediate', 'advanced'];
+      
+      levels.forEach(level => {
+        if (processedRoadmap.roadmap[level] && Array.isArray(processedRoadmap.roadmap[level])) {
+          // Convert array to object with step IDs
+          const points = processedRoadmap.roadmap[level];
+          const processedPoints = {};
+          
+          points.forEach((point, index) => {
+            const stepId = `step_${index + 1}`;
+            processedPoints[stepId] = {
+              pointId: stepId,
+              pointTitle: typeof point === 'string' ? point : point.pointTitle || point.title || point,
+              title: typeof point === 'string' ? point : point.pointTitle || point.title || point
+            };
+          });
+          
+          processedRoadmap.roadmap[level] = processedPoints;
+        }
+      });
+    }
+    
+    return processedRoadmap;
+  }
+
+  // Method to migrate existing roadmaps to use sequential step IDs
+  async migrateRoadmapToStepIds(userRoadmapId) {
+    this._checkConnection();
+    try {
+      // Get the current roadmap data
+      const result = await this.sql`
+        SELECT roadmap_data FROM user_roadmaps WHERE id = ${userRoadmapId}
+      `;
+      
+      if (result.length === 0) {
+        throw new Error('Roadmap not found');
+      }
+      
+      const currentRoadmapData = typeof result[0].roadmap_data === 'string' 
+        ? JSON.parse(result[0].roadmap_data) 
+        : result[0].roadmap_data;
+      
+      // Check if already migrated (has step_X structure)
+      const levels = ['beginner', 'intermediate', 'advanced'];
+      let needsMigration = false;
+      
+      for (const level of levels) {
+        if (currentRoadmapData.roadmap && currentRoadmapData.roadmap[level]) {
+          if (Array.isArray(currentRoadmapData.roadmap[level])) {
+            needsMigration = true;
+            break;
+          }
+        }
+      }
+      
+      if (!needsMigration) {
+        console.log(`✅ Roadmap ${userRoadmapId} already uses step IDs`);
+        return result[0];
+      }
+      
+      // Process with new step ID structure
+      const processedRoadmapData = this.processRoadmapWithStepIds(currentRoadmapData);
+      
+      // Update in database
+      const updateResult = await this.sql`
+        UPDATE user_roadmaps 
+        SET roadmap_data = ${JSON.stringify(processedRoadmapData)}, updated_at = NOW()
+        WHERE id = ${userRoadmapId}
+        RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
+      `;
+      
+      console.log(`✅ Migrated roadmap ${userRoadmapId} to use sequential step IDs`);
+      return updateResult[0];
+      
+    } catch (error) {
+      throw new Error(`Failed to migrate roadmap: ${error.message}`);
+    }
+  }
+
+  // Method to migrate ALL roadmaps in the database to use sequential step IDs
+  async migrateAllRoadmapsToStepIds() {
+    this._checkConnection();
+    try {
+      console.log('🔄 Starting migration of all roadmaps to use sequential step IDs...');
+      
+      // Get all roadmaps
+      const roadmaps = await this.sql`SELECT id, roadmap_data FROM user_roadmaps`;
+      
+      let migratedCount = 0;
+      let skippedCount = 0;
+      let errorCount = 0;
+      
+      for (const roadmap of roadmaps) {
+        try {
+          const currentRoadmapData = typeof roadmap.roadmap_data === 'string' 
+            ? JSON.parse(roadmap.roadmap_data) 
+            : roadmap.roadmap_data;
+          
+          // Check if already migrated (has step_X structure)
+          const levels = ['beginner', 'intermediate', 'advanced'];
+          let needsMigration = false;
+          
+          for (const level of levels) {
+            if (currentRoadmapData.roadmap && currentRoadmapData.roadmap[level]) {
+              if (Array.isArray(currentRoadmapData.roadmap[level])) {
+                needsMigration = true;
+                break;
+              }
+            }
+          }
+          
+          if (!needsMigration) {
+            skippedCount++;
+            continue;
+          }
+          
+          // Process with new step ID structure
+          const processedRoadmapData = this.processRoadmapWithStepIds(currentRoadmapData);
+          
+          // Update in database
+          await this.sql`
+            UPDATE user_roadmaps 
+            SET roadmap_data = ${JSON.stringify(processedRoadmapData)}, updated_at = NOW()
+            WHERE id = ${roadmap.id}
+          `;
+          
+          migratedCount++;
+          console.log(`✅ Migrated roadmap ${roadmap.id}`);
+          
+        } catch (error) {
+          console.error(`❌ Failed to migrate roadmap ${roadmap.id}:`, error.message);
+          errorCount++;
+        }
+      }
+      
+      console.log(`🎉 Migration completed! Migrated: ${migratedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
+      
+      return {
+        total: roadmaps.length,
+        migrated: migratedCount,
+        skipped: skippedCount,
+        errors: errorCount
+      };
+      
+    } catch (error) {
+      throw new Error(`Failed to migrate all roadmaps: ${error.message}`);
+    }
+  }
+
   async createUserRoadmap(userTopicId, roadmapData) {
     this._checkConnection();
     try {
+      // Process roadmap to include sequential step IDs
+      const processedRoadmapData = this.processRoadmapWithStepIds(roadmapData);
+      
       const result = await this.sql`
         INSERT INTO user_roadmaps (user_topic_id, roadmap_data)
-        VALUES (${userTopicId}, ${JSON.stringify(roadmapData)})
+        VALUES (${userTopicId}, ${JSON.stringify(processedRoadmapData)})
         RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
       `;
       
@@ -290,9 +447,12 @@ class DatabaseService {
   async updateUserRoadmap(roadmapId, roadmapData) {
     this._checkConnection();
     try {
+      // Process roadmap to include sequential step IDs
+      const processedRoadmapData = this.processRoadmapWithStepIds(roadmapData);
+      
       const result = await this.sql`
         UPDATE user_roadmaps 
-        SET roadmap_data = ${JSON.stringify(roadmapData)}, updated_at = NOW()
+        SET roadmap_data = ${JSON.stringify(processedRoadmapData)}, updated_at = NOW()
         WHERE id = ${roadmapId}
         RETURNING id, user_topic_id, roadmap_data, created_at, updated_at
       `;
@@ -387,43 +547,155 @@ class DatabaseService {
     }
   }
 
-  async storeUserVideos(userRoadmapId, level, videoData) {
+  async storeUserVideos(userRoadmapId, level, videoData, pageNumber = 1, pointId = null, isRegenerate = false, stepIndex = null) {
     this._checkConnection();
+    
+    // Generate sequential step ID if not provided
+    if (!pointId && stepIndex !== null) {
+      pointId = `step_${stepIndex + 1}`; // step_1, step_2, step_3, etc.
+    }
+    
+    console.log("🔍 DEBUG - storeUserVideos called with:", {
+      userRoadmapId,
+      level,
+      pageNumber,
+      pointId,
+      stepIndex,
+      pointIdType: typeof pointId,
+      isRegenerate,
+      videoDataLength: Array.isArray(videoData) ? videoData.length : 'not array'
+    });
+    
     try {
-      // First check if videos already exist for this level
-      const existingVideos = await this.getUserVideos(userRoadmapId, level);
+      console.log(`🔄 Storing videos for roadmap: ${userRoadmapId}, level: ${level}, page: ${pageNumber}, pointId: ${pointId}`);
+      
+      // Add pointId to each video entry for tracking
+      const videoDataWithPointId = videoData.map(video => ({
+        ...video,
+        pointId: pointId || `${level}_${pageNumber}`,
+        generatedAt: new Date().toISOString()
+      }));
+      
+      // If this is a regenerate operation with pointId, handle existing videos
+      if (isRegenerate && pointId) {
+        console.log(`🔄 Handling regeneration for point ${pointId}`);
+        
+        try {
+          // Use a transaction-like approach: first move existing, then insert new
+          
+          // Step 1: Move all existing videos for this point to next page numbers
+          const moveResult = await this.sql`
+            UPDATE user_videos 
+            SET page_number = page_number + 1 
+            WHERE user_roadmap_id = ${userRoadmapId} 
+              AND level = ${level} 
+              AND point_id = ${pointId}
+          `;
+          console.log(`� Moved ${moveResult.count || 0} existing videos to next pages`);
+          
+          // Step 2: Insert new videos at page 1
+          const result = await this.sql`
+            INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number, point_id, created_at, updated_at)
+            VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoDataWithPointId)}, ${pageNumber}, 1, ${pointId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING *
+          `;
+          console.log(`✅ Inserted new regenerated videos for point ${pointId} at page ${pageNumber}`);
+          return result[0];
+          
+        } catch (moveError) {
+          console.error(`❌ Error during regeneration for point ${pointId}:`, moveError);
+          
+          // If we still get a constraint error, it means there's already a record with generation_number = 1
+          // Let's find the next available generation number
+          const maxGenResult = await this.sql`
+            SELECT COALESCE(MAX(generation_number), 0) as max_gen
+            FROM user_videos 
+            WHERE user_roadmap_id = ${userRoadmapId} 
+              AND level = ${level} 
+              AND page_number = ${pageNumber}
+              AND point_id = ${pointId}
+          `;
+          
+          const nextGeneration = (maxGenResult[0]?.max_gen || 0) + 1;
+          console.log(`🔢 Using generation number ${nextGeneration} for point ${pointId} regeneration (timestamp fallback: ${Date.now() % 1000000})`);
+          
+          const result = await this.sql`
+            INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number, point_id, created_at, updated_at)
+            VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoDataWithPointId)}, ${pageNumber}, ${nextGeneration}, ${pointId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING *
+          `;
+          console.log(`✅ Inserted regenerated videos with generation ${nextGeneration}`);
+          return result[0];
+        }
+      }
+      
+      // Check if videos already exist for this point and page
+      const existingVideos = await this.sql`
+        SELECT * FROM user_videos 
+        WHERE user_roadmap_id = ${userRoadmapId} 
+          AND level = ${level} 
+          AND page_number = ${pageNumber}
+          AND point_id = ${pointId}
+      `;
       
       if (existingVideos.length > 0) {
-        // Update existing entry
+        // For existing entries, we need to insert a new row with incremented generation_number
+        // since generation_number is part of the primary key
+        const maxGeneration = Math.max(...existingVideos.map(v => v.generation_number));
+        const newGeneration = maxGeneration + 1;
+        
         const result = await this.sql`
-          UPDATE user_videos 
-          SET video_data = ${JSON.stringify(videoData)}, updated_at = CURRENT_TIMESTAMP
-          WHERE user_roadmap_id = ${userRoadmapId} AND level = ${level}
+          INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number, point_id, created_at, updated_at)
+          VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoDataWithPointId)}, ${pageNumber}, ${newGeneration}, ${pointId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           RETURNING *
         `;
+        console.log(`✅ Inserted updated videos for point ${pointId || 'unknown'} with generation ${newGeneration}`);
         return result[0];
       } else {
         // Insert new entry
         const result = await this.sql`
-          INSERT INTO user_videos (user_roadmap_id, level, video_data, created_at, updated_at)
-          VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoData)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number, point_id, created_at, updated_at)
+          VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoDataWithPointId)}, ${pageNumber}, 1, ${pointId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           RETURNING *
         `;
+        console.log(`✅ Inserted new videos for point ${pointId || 'unknown'}`);
         return result[0];
       }
     } catch (error) {
+      console.error(`❌ Failed to store videos:`, error);
       throw new Error(`Failed to store user videos: ${error.message}`);
     }
   }
 
-  async getUserVideos(userRoadmapId, level = null, page = 1) {
+  async getUserVideos(userRoadmapId, level = null, page = 1, pointId = null) {
     this._checkConnection();
     try {
-      console.log(`🔍 Fetching user videos for roadmap: ${userRoadmapId}, level: ${level}, page: ${page}`);
+      console.log(`🔍 Fetching videos for roadmap: ${userRoadmapId}, level: ${level}, page: ${page}, pointId: ${pointId}`);
       
       let result;
       
-      if (level !== null && page !== null) {
+      if (pointId) {
+        // Point-specific query using dedicated point_id column
+        result = await this.sql`
+          SELECT * 
+          FROM user_videos 
+          WHERE user_roadmap_id = ${userRoadmapId}
+            AND level = ${level}
+            AND page_number = ${page}
+            AND point_id = ${pointId}
+          ORDER BY generation_number DESC, created_at DESC
+          LIMIT 1
+        `;
+        
+        // If no point-specific videos found, don't fallback to level videos
+        // This ensures each point gets unique videos
+        if (result.length === 0) {
+          console.log(`📭 No videos found for point ${pointId}, will need to generate new ones`);
+          return [];
+        }
+        
+      } else if (level !== null && page !== null) {
+        // Legacy level-based query for backward compatibility
         result = await this.sql`
           SELECT * 
           FROM user_videos 
@@ -471,26 +743,42 @@ class DatabaseService {
     }
   }
 
-  async storeUserVideos(userRoadmapId, level, videoData, pageNumber = 1, isRegenerate = false) {
+  // New method to get videos for all points in a level
+  async getAllPointVideosForLevel(userRoadmapId, level, page = 1) {
     this._checkConnection();
     try {
-      // If this is a regenerate operation, move existing videos to next pages
-      if (isRegenerate) {
-        await this.moveVideosToNextPage(userRoadmapId, level);
-      }
-
-      // Get the next generation number for this page
-      const generationNumber = await this.getNextGenerationNumber(userRoadmapId, level, pageNumber);
-
+      console.log(`🔍 Fetching all point videos for roadmap: ${userRoadmapId}, level: ${level}, page: ${page}`);
+      
       const result = await this.sql`
-        INSERT INTO user_videos (user_roadmap_id, level, video_data, page_number, generation_number)
-        VALUES (${userRoadmapId}, ${level}, ${JSON.stringify(videoData)}, ${pageNumber}, ${generationNumber})
-        RETURNING user_roadmap_id, level, video_data, page_number, generation_number, created_at
+        SELECT DISTINCT point_id, video_data, generation_number, created_at, updated_at
+        FROM user_videos 
+        WHERE user_roadmap_id = ${userRoadmapId}
+          AND level = ${level}
+          AND page_number = ${page}
+          AND point_id IS NOT NULL
+        ORDER BY point_id, generation_number DESC, created_at DESC
       `;
       
-      return result[0];
+      // Group by point_id and get the latest generation for each point
+      const pointVideos = {};
+      
+      for (const item of result) {
+        if (!pointVideos[item.point_id] || pointVideos[item.point_id].generation_number < item.generation_number) {
+          pointVideos[item.point_id] = {
+            pointId: item.point_id,
+            video_data: typeof item.video_data === 'string' ? JSON.parse(item.video_data) : item.video_data,
+            generation_number: item.generation_number,
+            created_at: item.created_at,
+            updated_at: item.updated_at
+          };
+        }
+      }
+      
+      console.log(`📊 Found videos for ${Object.keys(pointVideos).length} points in ${level} level`);
+      return pointVideos;
     } catch (error) {
-      throw new Error(`Failed to store user videos: ${error.message}`);
+      console.error('❌ Error fetching all point videos:', error);
+      throw new Error(`Failed to fetch all point videos: ${error.message}`);
     }
   }
 
@@ -506,6 +794,64 @@ class DatabaseService {
       return result[0].next_generation;
     } catch (error) {
       throw new Error(`Failed to get next generation number: ${error.message}`);
+    }
+  }
+
+  // Get the next available step number for a level
+  async getNextStepNumber(userRoadmapId, level) {
+    this._checkConnection();
+    try {
+      // First check the roadmap data to see how many steps are defined for this level
+      const roadmapResult = await this.sql`
+        SELECT roadmap_data
+        FROM user_roadmaps 
+        WHERE id = ${userRoadmapId}
+      `;
+      
+      let maxStepsInRoadmap = 0;
+      if (roadmapResult.length > 0) {
+        const roadmapData = typeof roadmapResult[0].roadmap_data === 'string' 
+          ? JSON.parse(roadmapResult[0].roadmap_data) 
+          : roadmapResult[0].roadmap_data;
+          
+        if (roadmapData.roadmap && roadmapData.roadmap[level]) {
+          // If it's an object with step keys, count them
+          if (typeof roadmapData.roadmap[level] === 'object' && !Array.isArray(roadmapData.roadmap[level])) {
+            maxStepsInRoadmap = Object.keys(roadmapData.roadmap[level]).length;
+          } else if (Array.isArray(roadmapData.roadmap[level])) {
+            // If it's still an array, count the items
+            maxStepsInRoadmap = roadmapData.roadmap[level].length;
+          }
+        }
+      }
+      
+      // Then check existing videos to see what's already been generated
+      const result = await this.sql`
+        SELECT point_id
+        FROM user_videos 
+        WHERE user_roadmap_id = ${userRoadmapId} 
+          AND level = ${level}
+          AND point_id LIKE 'step_%'
+        ORDER BY 
+          CAST(SUBSTRING(point_id FROM 6) AS INTEGER) DESC
+        LIMIT 1
+      `;
+      
+      if (result.length === 0) {
+        return 1; // First step
+      }
+      
+      // Extract number from step_X and increment
+      const lastStepId = result[0].point_id; // e.g., "step_3"
+      const lastStepNumber = parseInt(lastStepId.split('_')[1]);
+      const nextStepNumber = lastStepNumber + 1;
+      
+      // Don't exceed the number of steps defined in the roadmap
+      return Math.min(nextStepNumber, maxStepsInRoadmap + 1);
+      
+    } catch (error) {
+      console.error('Error getting next step number:', error);
+      return 1; // Fallback to first step
     }
   }
 

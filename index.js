@@ -153,8 +153,8 @@ process.on("uncaughtException", async (error) => {
 //   process.exit(1);
 // });
 
-app.listen(PORT, "192.168.1.3", () => {
-  console.log(`🚀 Server started successfully on http://192.168.1.3:${PORT}`);
+app.listen(PORT, "192.168.1.2", () => {
+  console.log(`🚀 Server started successfully on http://192.168.1.2:${PORT}`);
   console.log(`📊 Environment: ${NODE_ENV}`);
   console.log(`📝 Logging to files: ${process.cwd()}/logs/`);
 

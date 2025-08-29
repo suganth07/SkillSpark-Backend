@@ -84,12 +84,13 @@ router.post(
 
       const points = [];
       let order = 1;
+      let globalStepNumber = 1; // Global step counter across all levels
 
       for (const level of ["beginner", "intermediate", "advanced"]) {
         if (roadmap[level] && Array.isArray(roadmap[level])) {
           for (const pointTitle of roadmap[level]) {
             const point = new PointResponse({
-              id: generateId("point"),
+              id: `step_${globalStepNumber}`, // Use sequential step ID instead of random ID
               title: pointTitle,
               description: `Master ${pointTitle.toLowerCase()} concepts and patterns`,
               level: level,
@@ -99,6 +100,7 @@ router.post(
             });
             points.push(point);
             order++;
+            globalStepNumber++; // Increment global step number
           }
         }
       }
