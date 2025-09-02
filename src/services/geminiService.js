@@ -245,7 +245,8 @@ class GeminiService {
 
   async generateQuiz(
     roadmapData,
-    userPreferences = { default_roadmap_depth: "detailed", default_video_length: "medium" }
+    userPreferences = { default_roadmap_depth: "detailed", default_video_length: "medium" },
+    usedQuestions = []
   ) {
     try {
       // Extract topic and roadmap structure
@@ -278,11 +279,25 @@ class GeminiService {
         }
       });
 
+      // Create used questions section for the prompt
+      let usedQuestionsSection = '';
+      if (usedQuestions && usedQuestions.length > 0) {
+        usedQuestionsSection = `
+        
+        IMPORTANT - AVOID THESE PREVIOUSLY USED QUESTIONS:
+        The following questions have already been used for this roadmap. DO NOT generate similar or duplicate questions:
+        ${usedQuestions.slice(0, 20).map((q, index) => `${index + 1}. ${q}`).join('\n')}
+        
+        Generate completely NEW and DIFFERENT questions that cover the same topics but with different angles, scenarios, or perspectives.
+        `;
+      }
+
       const prompt = `
         Generate a comprehensive 15-question multiple choice quiz for "${topic}" based on the following learning roadmap.
 
         Learning Path Overview:
         ${allPoints.map(point => `- ${point.level.toUpperCase()}: ${point.title}`).join('\n')}
+        ${usedQuestionsSection}
 
         Quiz Requirements:
         1. Generate exactly 15 questions total
@@ -291,11 +306,13 @@ class GeminiService {
         4. Cover different topics from the roadmap evenly
         5. Include practical, scenario-based questions when possible
         6. Provide clear explanations for correct answers
+        7. ${usedQuestions.length > 0 ? 'ENSURE ALL QUESTIONS ARE COMPLETELY DIFFERENT from the used questions listed above' : 'Focus on fresh, original questions'}
 
         Question Guidelines:
         - BEGINNER: Basic concepts, definitions, fundamental principles
         - INTERMEDIATE: Application, best practices, common scenarios  
         - ADVANCED: Complex scenarios, optimization, architecture decisions
+        ${usedQuestions.length > 0 ? '- VARIETY: Use different question types (scenario-based, definition, comparison, troubleshooting, best practices)' : ''}
 
         Format the response as a JSON object with this exact structure:
         {

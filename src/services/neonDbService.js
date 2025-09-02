@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -1694,6 +1695,149 @@ class DatabaseService {
       return hasAttempts;
     } catch (error) {
       console.error('❌ Failed to check quiz attempts:', error);
+      return false;
+    }
+  }
+
+  // ====== USED QUESTIONS TRACKING METHODS ======
+  
+  /**
+   * Create SHA-256 hash of question text for efficient storage and lookup
+   */
+  _createQuestionHash(questionText) {
+    return crypto.createHash('sha256').update(questionText.toLowerCase().trim()).digest('hex');
+  }
+
+  /**
+   * Store used questions for a roadmap
+   */
+  async storeUsedQuestions(userId, userRoadmapId, questions) {
+    this._checkConnection();
+    try {
+      console.log(`📝 Storing ${questions.length} used questions for roadmap: ${userRoadmapId}`);
+      console.log(`📝 DEBUG - First question:`, questions[0]);
+      console.log(`📝 DEBUG - Questions structure:`, questions.slice(0, 2));
+      
+      const questionHashes = questions.map(q => {
+        const questionText = q.question || q.text || q;
+        console.log(`📝 DEBUG - Processing question:`, questionText?.substring(0, 50) + '...');
+        return {
+          user_id: userId,
+          user_roadmap_id: userRoadmapId,
+          question_text: questionText,
+          question_hash: this._createQuestionHash(questionText)
+        };
+      });
+
+      console.log(`📝 DEBUG - About to insert ${questionHashes.length} questions`);
+
+      // Insert all questions (ignore conflicts for existing hashes)
+      for (const qHash of questionHashes) {
+        console.log(`📝 DEBUG - Inserting question: "${qHash.question_text?.substring(0, 30)}..."`);
+        await this.sql`
+          INSERT INTO user_roadmap_used_questions (user_id, user_roadmap_id, question_text, question_hash)
+          VALUES (${qHash.user_id}, ${qHash.user_roadmap_id}, ${qHash.question_text}, ${qHash.question_hash})
+          ON CONFLICT (user_id, user_roadmap_id, question_hash) DO NOTHING
+        `;
+      }
+
+      console.log(`✅ Successfully stored used questions for roadmap: ${userRoadmapId}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to store used questions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get list of used question texts for a user's roadmap (for AI avoidance)
+   */
+  async getUsedQuestionTexts(userId, userRoadmapId, limit = 20) {
+    this._checkConnection();
+    try {
+      console.log(`🔍 Getting used question texts for roadmap: ${userRoadmapId}`);
+      
+      const usedQuestions = await this.sql`
+        SELECT question_text
+        FROM user_roadmap_used_questions
+        WHERE user_id = ${userId} AND user_roadmap_id = ${userRoadmapId}
+        ORDER BY used_at DESC
+        LIMIT ${limit}
+      `;
+
+      const questionTexts = usedQuestions.map(q => q.question_text);
+      console.log(`✅ Found ${questionTexts.length} used question texts for roadmap: ${userRoadmapId}`);
+      return questionTexts;
+    } catch (error) {
+      console.error('❌ Failed to get used question texts:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get list of used question hashes for a user's roadmap
+   */
+  async getUsedQuestionHashes(userId, userRoadmapId) {
+    this._checkConnection();
+    try {
+      console.log(`🔍 Getting used question hashes for roadmap: ${userRoadmapId}`);
+      
+      const usedQuestions = await this.sql`
+        SELECT question_hash, question_text, used_at
+        FROM user_roadmap_used_questions
+        WHERE user_id = ${userId} AND user_roadmap_id = ${userRoadmapId}
+        ORDER BY used_at DESC
+      `;
+
+      const hashes = usedQuestions.map(q => q.question_hash);
+      console.log(`✅ Found ${hashes.length} used questions for roadmap: ${userRoadmapId}`);
+      return hashes;
+    } catch (error) {
+      console.error('❌ Failed to get used question hashes:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Filter out questions that have already been used
+   */
+  filterUnusedQuestions(questions, usedHashes) {
+    console.log(`🔍 Filtering ${questions.length} questions against ${usedHashes.length} used hashes`);
+    
+    const unusedQuestions = questions.filter(question => {
+      const questionText = question.question || question.text || question;
+      const questionHash = this._createQuestionHash(questionText);
+      return !usedHashes.includes(questionHash);
+    });
+
+    console.log(`✅ Found ${unusedQuestions.length} unused questions out of ${questions.length} total`);
+    return unusedQuestions;
+  }
+
+  /**
+   * Clear old used questions (keep last 100 per roadmap to prevent unlimited growth)
+   */
+  async cleanupOldUsedQuestions(userId, userRoadmapId, keepCount = 100) {
+    this._checkConnection();
+    try {
+      console.log(`🧹 Cleaning up old used questions for roadmap: ${userRoadmapId} (keeping ${keepCount})`);
+      
+      await this.sql`
+        DELETE FROM user_roadmap_used_questions
+        WHERE user_id = ${userId} 
+        AND user_roadmap_id = ${userRoadmapId}
+        AND id NOT IN (
+          SELECT id FROM user_roadmap_used_questions
+          WHERE user_id = ${userId} AND user_roadmap_id = ${userRoadmapId}
+          ORDER BY used_at DESC
+          LIMIT ${keepCount}
+        )
+      `;
+
+      console.log(`✅ Cleaned up old used questions for roadmap: ${userRoadmapId}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to cleanup old used questions:', error);
       return false;
     }
   }

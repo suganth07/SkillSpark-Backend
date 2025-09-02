@@ -1,5 +1,6 @@
 import express from "express";
 import neonDbService from "../services/neonDbService.js";
+import geminiService from "../services/geminiService.js";
 import {
   QuizSuccessResponse,
   ErrorResponse,
@@ -604,7 +605,7 @@ router.get("/attempts/:userId", async (req, res) => {
   }
 });
 
-// Get quiz results for a specific roadmap (with all attempts)
+// Get quiz results for a specific roadmap (with all attempts across all quiz versions)
 router.get("/results/:roadmapId", async (req, res) => {
   try {
     const { roadmapId } = req.params;
@@ -642,7 +643,7 @@ router.get("/results/:roadmapId", async (req, res) => {
       return res.status(404).json(errorResponse);
     }
 
-    // Get quiz for this roadmap
+    // Get the latest quiz for this roadmap
     const quiz = await neonDbService.getUserQuiz(roadmapId);
     if (!quiz) {
       const errorResponse = new ErrorResponse(
@@ -655,16 +656,55 @@ router.get("/results/:roadmapId", async (req, res) => {
       return res.status(404).json(errorResponse);
     }
 
-    // Get all attempts for this roadmap
-    const attempts = await neonDbService.getQuizAttemptsForRoadmap(userId, roadmapId);
+    // Get ALL attempts for this roadmap (across all quiz versions)
+    const allAttempts = await neonDbService.sql`
+      SELECT qa.*, uq.quiz_data
+      FROM quiz_attempts qa
+      INNER JOIN user_quizzes uq ON qa.user_quiz_id = uq.id
+      WHERE uq.user_roadmap_id = ${roadmapId} AND qa.user_id = ${userId}
+      ORDER BY qa.completed_at DESC
+    `;
 
-    // Get quiz statistics
-    const statistics = await neonDbService.getQuizStatistics(roadmapId);
+    // Parse quiz_data for each attempt
+    const attempts = allAttempts.map(attempt => {
+      if (typeof attempt.quiz_data === 'string') {
+        attempt.quiz_data = JSON.parse(attempt.quiz_data);
+      }
+      return attempt;
+    });
+
+    // Get quiz statistics across ALL attempts for this roadmap
+    const roadmapStatistics = await neonDbService.sql`
+      SELECT 
+        COUNT(*) as total_attempts,
+        ROUND(AVG(qa.percentage)) as avg_percentage,
+        MAX(qa.percentage) as best_percentage,
+        MIN(qa.percentage) as worst_percentage,
+        ROUND(AVG(qa.time_taken)) as avg_time_in_seconds
+      FROM quiz_attempts qa
+      INNER JOIN user_quizzes uq ON qa.user_quiz_id = uq.id
+      WHERE uq.user_roadmap_id = ${roadmapId} AND qa.user_id = ${userId}
+    `;
+
+    const statistics = roadmapStatistics.length > 0 ? {
+      totalAttempts: parseInt(roadmapStatistics[0].total_attempts) || 0,
+      avgPercentage: parseInt(roadmapStatistics[0].avg_percentage) || 0,
+      bestPercentage: parseInt(roadmapStatistics[0].best_percentage) || 0,
+      worstPercentage: parseInt(roadmapStatistics[0].worst_percentage) || 0,
+      avgTimeInSeconds: parseInt(roadmapStatistics[0].avg_time_in_seconds) || 0
+    } : {
+      totalAttempts: 0,
+      avgPercentage: 0,
+      bestPercentage: 0,
+      worstPercentage: 0,
+      avgTimeInSeconds: 0
+    };
 
     appLogger.info("Quiz results retrieved successfully", {
       roadmapId,
       userId,
       attemptsCount: attempts.length,
+      totalAttempts: statistics.totalAttempts,
       ip: req.ip,
     });
 
@@ -676,9 +716,9 @@ router.get("/results/:roadmapId", async (req, res) => {
           topic: roadmap.topic,
           roadmapData: roadmap.roadmapData
         },
-        quiz: quiz,
-        attempts: attempts,
-        statistics: statistics
+        quiz: quiz, // Latest quiz
+        attempts: attempts, // All attempts across all quiz versions
+        statistics: statistics // Statistics across all attempts
       }
     };
 
@@ -778,112 +818,6 @@ router.get("/stats/:roadmapId", async (req, res) => {
   }
 });
 
-// Regenerate quiz
-router.post(
-  "/regenerate/:roadmapId",
-  quizLimiter,
-  validateQuizInput,
-  async (req, res) => {
-    const startTime = Date.now();
-    const { roadmapId } = req.params;
-    const { userId } = req.body;
-
-    try {
-      if (!roadmapId || !userId) {
-        const errorResponse = new ErrorResponse(
-          new ErrorDetails(
-            "MISSING_PARAMETERS",
-            "Missing required parameters",
-            "roadmapId and userId are required"
-          )
-        );
-        return res.status(400).json(errorResponse);
-      }
-
-      appLogger.info("Regenerating quiz for roadmap", {
-        roadmapId,
-        userId,
-        ip: req.ip,
-        userAgent: req.get("user-agent"),
-      });
-
-      // Get the roadmap data
-      const userRoadmaps = await neonDbService.getUserRoadmaps(userId);
-      const roadmap = userRoadmaps.find(r => r.id === roadmapId);
-
-      if (!roadmap) {
-        const errorResponse = new ErrorResponse(
-          new ErrorDetails(
-            "ROADMAP_NOT_FOUND",
-            "Roadmap not found",
-            "The specified roadmap does not exist or doesn't belong to the user"
-          )
-        );
-        return res.status(404).json(errorResponse);
-      }
-
-      // Generate new quiz using Gemini AI
-      const geminiService = await import('../services/geminiService.js');
-      const quizData = await geminiService.default.generateQuiz(roadmap.roadmapData);
-
-      // Update existing quiz or create new one
-      let quiz;
-      try {
-        quiz = await neonDbService.updateUserQuiz(
-          roadmapId,
-          quizData,
-          quizData.questions.length,
-          'mixed'
-        );
-      } catch (updateError) {
-        // If no quiz exists to update, create a new one
-        quiz = await neonDbService.createUserQuiz(
-          roadmapId,
-          quizData,
-          quizData.questions.length,
-          'mixed'
-        );
-      }
-
-      const processingTime = Date.now() - startTime;
-
-      appLogger.info("Quiz regenerated successfully", {
-        roadmapId,
-        userId,
-        quizId: quiz.id,
-        totalQuestions: quiz.total_questions,
-        processingTime: `${processingTime}ms`,
-        ip: req.ip,
-      });
-
-      const response = new QuizSuccessResponse(quiz);
-      res.json(response);
-    } catch (error) {
-      const processingTime = Date.now() - startTime;
-
-      appLogger.error("Error regenerating quiz", error, {
-        roadmapId,
-        userId,
-        processingTime: `${processingTime}ms`,
-        ip: req.ip,
-        userAgent: req.get("user-agent"),
-      });
-
-      const errorResponse = new ErrorResponse(
-        new ErrorDetails(
-          "QUIZ_REGENERATION_FAILED",
-          "Failed to regenerate quiz",
-          process.env.NODE_ENV === "production"
-            ? "Please try again later"
-            : error.message
-        )
-      );
-
-      res.status(500).json(errorResponse);
-    }
-  }
-);
-
 // Route 7: Save quiz progress (individual answers)
 router.post('/:quizId/progress', quizProgressLimiter, validateQuizInput, async (req, res) => {
   const startTime = Date.now();
@@ -977,7 +911,7 @@ router.get('/:quizId/progress', quizProgressLimiter, async (req, res) => {
   const startTime = Date.now();
   const { quizId } = req.params;
   const { userId } = req.query;
-  
+ 
   console.log('🚀 DEBUG - Quiz progress retrieval request:');
   console.log('📋 Request params:', req.params);
   console.log('📋 Request query:', req.query);
@@ -1027,7 +961,7 @@ router.get('/:quizId/progress', quizProgressLimiter, async (req, res) => {
   }
 });
 
-// Regenerate quiz for a roadmap (delete existing and create new)
+// Regenerate quiz for a roadmap (create new quiz with different questions)
 router.post("/regenerate/:roadmapId", async (req, res) => {
   const startTime = Date.now();
   
@@ -1035,7 +969,16 @@ router.post("/regenerate/:roadmapId", async (req, res) => {
     const { roadmapId } = req.params;
     const { userId } = req.body;
 
+    console.log('🚀 DEBUG - Quiz regeneration request received:');
+    console.log('📋 Request params:', req.params);
+    console.log('📋 Request body:', req.body);
+    console.log('📋 Request body type:', typeof req.body);
+    console.log('📋 Request body keys:', Object.keys(req.body || {}));
+    console.log('📋 Content-Type:', req.get('content-type'));
+    console.log('📋 Raw extracted values:', { roadmapId, userId });
+
     if (!roadmapId || !userId) {
+      console.log('❌ Missing required fields - roadmapId:', roadmapId, 'userId:', userId);
       const errorResponse = new ErrorResponse(
         new ErrorDetails(
           "MISSING_REQUIRED_FIELDS",
@@ -1046,36 +989,50 @@ router.post("/regenerate/:roadmapId", async (req, res) => {
       return res.status(400).json(errorResponse);
     }
 
-    appLogger.info('Starting quiz regeneration', { roadmapId, userId });
+    appLogger.info('Starting quiz regeneration (creating new quiz)', { roadmapId, userId });
 
-    // First, check if roadmap exists
-    const roadmap = await neonDbService.getUserRoadmap(roadmapId, userId);
+    // Get user roadmaps and find the specific roadmap
+    const userRoadmaps = await neonDbService.getUserRoadmaps(userId);
+    const roadmap = userRoadmaps.find(r => r.id === roadmapId);
+    
     if (!roadmap) {
+      console.log(`❌ Roadmap not found: ${roadmapId} for user: ${userId}`);
+      console.log(`📋 Available roadmap IDs:`, userRoadmaps.map(r => r.id));
+      
       const errorResponse = new ErrorResponse(
         new ErrorDetails(
           "ROADMAP_NOT_FOUND",
           "Roadmap not found",
-          "The specified roadmap does not exist"
+          userRoadmaps.length === 0 
+            ? "No roadmaps found for this user. Please create a roadmap first."
+            : `The specified roadmap does not exist. Available roadmaps: ${userRoadmaps.map(r => r.id).join(', ')}`
         )
       );
       return res.status(404).json(errorResponse);
     }
 
-    // Delete existing quiz and attempts for this roadmap
-    await neonDbService.deleteQuizByRoadmap(roadmapId);
-    appLogger.info('Existing quiz deleted for regeneration', { roadmapId });
+    // Get previously used questions for this roadmap to avoid repetition
+    appLogger.info('Fetching used questions to avoid repetition', { roadmapId, userId });
+    const usedQuestionTexts = await neonDbService.getUsedQuestionTexts(userId, roadmapId, 50);
 
-    // Generate new quiz using the roadmap data
-    const roadmapData = roadmap.roadmap_data;
+    appLogger.info('Found used questions for avoidance', { 
+      roadmapId, 
+      usedQuestionsCount: usedQuestionTexts.length 
+    });
+
+    // Generate new quiz using the roadmap data and avoiding used questions
+    const roadmapData = roadmap.roadmapData || roadmap.roadmap_data;
     const topic = roadmap.topic;
 
     appLogger.info('Generating new quiz via Gemini service', { 
       roadmapId,
       topic,
-      roadmapStructure: roadmapData ? Object.keys(roadmapData).length : 0
+      roadmapStructure: roadmapData ? Object.keys(roadmapData).length : 0,
+      avoidingQuestionsCount: usedQuestionTexts.length
     });
 
-    const quizData = await geminiService.generateQuiz(roadmapData, topic);
+    // Generate fresh quiz data with Gemini AI, avoiding previously used questions
+    const quizData = await geminiService.generateQuiz(roadmapData, topic, usedQuestionTexts);
     
     if (!quizData || !quizData.questions || !Array.isArray(quizData.questions)) {
       const errorResponse = new ErrorResponse(
@@ -1088,27 +1045,69 @@ router.post("/regenerate/:roadmapId", async (req, res) => {
       return res.status(500).json(errorResponse);
     }
 
-    // Save the new quiz
-    const newQuiz = await neonDbService.saveQuiz({
+    // Create a completely new quiz entry (don't delete existing ones)
+    const newQuiz = await neonDbService.sql`
+      INSERT INTO user_quizzes (user_roadmap_id, quiz_data, total_questions, difficulty_level, created_at, updated_at)
+      VALUES (
+        ${roadmapId}, 
+        ${JSON.stringify(quizData)}, 
+        ${quizData.questions.length}, 
+        'mixed',
+        NOW(), 
+        NOW()
+      )
+      RETURNING *
+    `;
+
+    const createdQuiz = newQuiz[0];
+    
+    // Parse the quiz_data if it's a string
+    if (typeof createdQuiz.quiz_data === 'string') {
+      createdQuiz.quiz_data = JSON.parse(createdQuiz.quiz_data);
+    }
+
+    appLogger.info('New quiz created successfully', {
       roadmapId,
-      userId,
-      quizData,
-      topic
+      newQuizId: createdQuiz.id,
+      questionsCount: quizData.questions.length
     });
+
+    // Store the new questions as used questions for future avoidance
+    try {
+      await neonDbService.storeUsedQuestions(
+        userId, 
+        roadmapId, 
+        quizData.questions.map(q => q.question)
+      );
+      appLogger.info('New questions stored as used questions', { 
+        roadmapId, 
+        newQuestionsCount: quizData.questions.length 
+      });
+
+      // Clean up old used questions (keep last 200 to prevent unlimited growth)
+      await neonDbService.cleanupOldUsedQuestions(userId, roadmapId, 200);
+    } catch (storeError) {
+      // Don't fail the quiz generation if storing used questions fails
+      appLogger.warn('Failed to store used questions, but quiz was created successfully', {
+        error: storeError.message,
+        roadmapId,
+        userId
+      });
+    }
 
     const processingTime = Date.now() - startTime;
     
-    appLogger.info('Quiz regenerated successfully', {
+    appLogger.info('Quiz regenerated successfully (new quiz created)', {
       roadmapId,
       userId,
-      newQuizId: newQuiz.id,
-      questionsCount: quizData.questions.length,
+      newQuizId: createdQuiz.id,
+      questionsCount: createdQuiz.total_questions,
       processingTime: `${processingTime}ms`,
       ip: req.ip,
       userAgent: req.get("user-agent"),
     });
 
-    res.json(new QuizSuccessResponse(newQuiz));
+    res.json(new QuizSuccessResponse(createdQuiz));
 
   } catch (error) {
     const processingTime = Date.now() - startTime;
