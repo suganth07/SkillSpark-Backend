@@ -37,7 +37,12 @@ export const playlistLimiter = createRateLimiter({
 
 export const quizLimiter = createRateLimiter({
   windowMs: 2 * 60 * 1000, // 2 minutes  
-  max: 10, // limit each IP to 10 quiz requests per windowMs
+  max: 30, // Increased from 10 to 30 quiz requests per windowMs
+});
+
+export const quizProgressLimiter = createRateLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  max: 50, // Allow 50 progress saves per minute for smooth quiz taking
 });
 
 export const userDataLimiter = createRateLimiter({

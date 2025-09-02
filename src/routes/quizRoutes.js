@@ -7,6 +7,7 @@ import {
 } from "../models/responseModels.js";
 import {
   quizLimiter,
+  quizProgressLimiter,
   validateQuizInput,
 } from "../middleware/security.js";
 import { appLogger } from "../utils/logger.js";
@@ -737,7 +738,7 @@ router.post(
 );
 
 // Route 7: Save quiz progress (individual answers)
-router.post('/:quizId/progress', quizLimiter, validateQuizInput, async (req, res) => {
+router.post('/:quizId/progress', quizProgressLimiter, validateQuizInput, async (req, res) => {
   const startTime = Date.now();
   const { quizId } = req.params;
   const { userId, questionIndex, selectedOption, timeSpent } = req.body;
@@ -825,7 +826,7 @@ router.post('/:quizId/progress', quizLimiter, validateQuizInput, async (req, res
 });
 
 // Route 8: Get quiz progress
-router.get('/:quizId/progress', quizLimiter, async (req, res) => {
+router.get('/:quizId/progress', quizProgressLimiter, async (req, res) => {
   const startTime = Date.now();
   const { quizId } = req.params;
   const { userId } = req.query;
