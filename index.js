@@ -31,7 +31,7 @@ try {
 }
 
 const app = express();
-const PORT = 8001;
+const PORT = process.env.PORT || 8001;
 const NODE_ENV = process.env.NODE_ENV || "development";
 
 app.set("trust proxy", 1);
@@ -155,8 +155,8 @@ process.on("uncaughtException", async (error) => {
 //   process.exit(1);
 // });
 
-app.listen(PORT, "10.149.175.32", () => {
-  console.log(`🚀 Server started successfully on http://10.149.175.32:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server started successfully on http://0.0.0.0:${PORT}`);
   console.log(`📊 Environment: ${NODE_ENV}`);
   console.log(`📝 Logging to files: ${process.cwd()}/logs/`);
 
