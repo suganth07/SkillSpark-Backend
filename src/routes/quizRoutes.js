@@ -227,6 +227,88 @@ router.get("/attempts/check/:roadmapId", async (req, res) => {
   }
 });
 
+// Get quiz by specific ID (for regenerated quizzes)
+router.get("/id/:quizId", async (req, res) => {
+  try {
+    const { quizId } = req.params;
+
+    if (!quizId) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails(
+          "MISSING_PARAMETERS", 
+          "Missing required parameters",
+          "quizId is required"
+        )
+      );
+      return res.status(400).json(errorResponse);
+    }
+
+    appLogger.info("Getting quiz by ID", {
+      quizId,
+      ip: req.ip,
+    });
+
+    // Get quiz by ID
+    const quizResult = await neonDbService.sql`
+      SELECT 
+        id,
+        user_roadmap_id,
+        quiz_data,
+        total_questions,
+        difficulty_level,
+        created_at,
+        updated_at
+      FROM user_quizzes 
+      WHERE id = ${quizId}
+      LIMIT 1
+    `;
+
+    if (quizResult.length === 0) {
+      const errorResponse = new ErrorResponse(
+        new ErrorDetails(
+          "QUIZ_NOT_FOUND",
+          "Quiz not found", 
+          `No quiz found with ID: ${quizId}`
+        )
+      );
+      return res.status(404).json(errorResponse);
+    }
+
+    const quiz = quizResult[0];
+    
+    // Parse quiz_data if it's a string
+    if (typeof quiz.quiz_data === 'string') {
+      quiz.quiz_data = JSON.parse(quiz.quiz_data);
+    }
+
+    appLogger.info("Quiz retrieved successfully by ID", {
+      quizId,
+      questionsCount: quiz.total_questions,
+      ip: req.ip,
+    });
+
+    res.json(new QuizSuccessResponse(quiz));
+  } catch (error) {
+    appLogger.error("Error getting quiz by ID", {
+      quizId: req.params.quizId,
+      error: error.message,
+      stack: error.stack,
+    });
+
+    const errorResponse = new ErrorResponse(
+      new ErrorDetails(
+        "QUIZ_FETCH_ERROR",
+        "Failed to retrieve quiz",
+        process.env.NODE_ENV === "production"
+          ? "Please try again later"
+          : error.message
+      )
+    );
+
+    res.status(500).json(errorResponse);
+  }
+});
+
 // Get existing quiz for a roadmap
 router.get("/:roadmapId", async (req, res) => {
   try {

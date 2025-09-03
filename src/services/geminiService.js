@@ -279,77 +279,53 @@ class GeminiService {
         }
       });
 
-      // Create used questions section for the prompt
+      // Create used questions section for the prompt (limit to prevent overload)
       let usedQuestionsSection = '';
       if (usedQuestions && usedQuestions.length > 0) {
+        // Limit to 5 most recent questions to avoid API overload
+        const recentQuestions = usedQuestions.slice(-5);
         usedQuestionsSection = `
         
-        IMPORTANT - AVOID THESE PREVIOUSLY USED QUESTIONS:
-        The following questions have already been used for this roadmap. DO NOT generate similar or duplicate questions:
-        ${usedQuestions.slice(0, 20).map((q, index) => `${index + 1}. ${q}`).join('\n')}
+        IMPORTANT - GENERATE FRESH QUESTIONS:
+        You have generated ${usedQuestions.length} questions before for this roadmap. 
+        Most recent questions to avoid similar patterns:
+        ${recentQuestions.map((q, index) => `${index + 1}. ${q.substring(0, 100)}...`).join('\n')}
         
-        Generate completely NEW and DIFFERENT questions that cover the same topics but with different angles, scenarios, or perspectives.
+        Generate completely NEW questions with different approaches, scenarios, and perspectives.
         `;
       }
 
       const prompt = `
-        Generate a comprehensive 15-question multiple choice quiz for "${topic}" based on the following learning roadmap.
+        Generate 15 multiple choice questions for "${topic}" quiz.
 
-        Learning Path Overview:
-        ${allPoints.map(point => `- ${point.level.toUpperCase()}: ${point.title}`).join('\n')}
+        Topics to cover:
+        ${allPoints.slice(0, 10).map(point => `- ${point.title}`).join('\n')}
         ${usedQuestionsSection}
 
-        Quiz Requirements:
-        1. Generate exactly 15 questions total
-        2. Distribution: 5 beginner + 5 intermediate + 5 advanced questions
-        3. Each question must have exactly 4 options (A, B, C, D)
-        4. Cover different topics from the roadmap evenly
-        5. Include practical, scenario-based questions when possible
-        6. Provide clear explanations for correct answers
-        7. ${usedQuestions.length > 0 ? 'ENSURE ALL QUESTIONS ARE COMPLETELY DIFFERENT from the used questions listed above' : 'Focus on fresh, original questions'}
+        Requirements:
+        - 5 beginner + 5 intermediate + 5 advanced questions
+        - 4 options each (A,B,C,D) with explanations
+        - Practical, scenario-based questions preferred
+        ${usedQuestions.length > 0 ? '- Generate FRESH questions different from previous ones' : ''}
 
-        Question Guidelines:
-        - BEGINNER: Basic concepts, definitions, fundamental principles
-        - INTERMEDIATE: Application, best practices, common scenarios  
-        - ADVANCED: Complex scenarios, optimization, architecture decisions
-        ${usedQuestions.length > 0 ? '- VARIETY: Use different question types (scenario-based, definition, comparison, troubleshooting, best practices)' : ''}
-
-        Format the response as a JSON object with this exact structure:
+        JSON format:
         {
           "questions": [
             {
               "id": "q1",
-              "question": "What is the primary purpose of React components?",
-              "options": [
-                "To handle database operations",
-                "To create reusable UI elements", 
-                "To manage server requests",
-                "To style web pages"
-              ],
+              "question": "Question text here?",
+              "options": ["Option A", "Option B", "Option C", "Option D"],
               "correctAnswer": 1,
-              "difficulty": "beginner",
-              "topic": "React Components",
-              "explanation": "React components are the building blocks of React applications, designed to create reusable UI elements that can manage their own state and lifecycle."
+              "explanation": "Why this answer is correct",
+              "difficulty": "beginner"
             }
           ],
           "metadata": {
             "topic": "${topic}",
             "totalQuestions": 15,
-            "difficultyDistribution": {
-              "beginner": 5,
-              "intermediate": 5,
-              "advanced": 5
-            },
-            "generatedAt": "${new Date().toISOString()}"
+            "difficultyDistribution": {"beginner": 5, "intermediate": 5, "advanced": 5}
           }
         }
-
-        Important Notes:
-        - correctAnswer should be the INDEX (0-3) of the correct option
-        - Make questions specific to ${topic} development
-        - Avoid overly tricky or ambiguous questions
-        - Focus on practical knowledge that developers actually use
-        - Ensure explanations are educational and helpful
 
         Return only the JSON object, no additional text or formatting.
       `;
@@ -440,6 +416,19 @@ class GeminiService {
       return quizData;
     } catch (error) {
       console.error("Error generating quiz:", error);
+      
+      // If it's a 503 (service overloaded) and we had used questions, retry without them
+      if (error.message.includes('503') && usedQuestions && usedQuestions.length > 0) {
+        console.log("🔄 Retrying quiz generation without used questions due to service overload...");
+        try {
+          // Retry with empty used questions to reduce prompt size
+          return await this.generateQuiz(roadmapData, userPreferences, []);
+        } catch (retryError) {
+          console.error("Retry also failed:", retryError);
+          throw new Error(`Failed to generate quiz after retry: ${retryError.message}`);
+        }
+      }
+      
       throw new Error(`Failed to generate quiz: ${error.message}`);
     }
   }
